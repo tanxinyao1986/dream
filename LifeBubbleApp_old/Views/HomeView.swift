@@ -21,6 +21,10 @@ struct HomeView: View {
     @State private var showSnoozeHint = false
     @State private var snoozeHintText = ""
 
+    // 任务输入
+    @State private var showTaskInput = false
+    @State private var taskInputText = ""
+
     var body: some View {
         ZStack {
             // 背景渐变
@@ -145,7 +149,7 @@ struct HomeView: View {
                             }
                     )
 
-                    Text("长按创建泡泡")
+                    Text("长按吹出泡泡")
                         .font(.system(size: 11))
                         .foregroundColor(Color(hex: "6B6B6B").opacity(0.6))
                         .opacity(isLongPressingLaunch ? 0 : 1)
@@ -216,6 +220,11 @@ struct HomeView: View {
                 )
             }
         }
+        .sheet(isPresented: $showTaskInput) {
+            TaskInputSheet(taskText: $taskInputText, onSubmit: {
+                createNewTask()
+            })
+        }
     }
 
     // MARK: - 长按发射台
@@ -259,8 +268,22 @@ struct HomeView: View {
             launchBubbleScale = 0
         }
 
-        // TODO: Open simple "New Task" input interface (not AI Chat)
-        // For now, bubble animation only - no navigation
+        showTaskInput = true
+    }
+
+    private func createNewTask() {
+        guard !taskInputText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+
+        let newBubble = Bubble(
+            text: taskInputText,
+            type: .chore,
+            position: CGPoint(x: 0.5, y: 0.3)
+        )
+        appState.addBubble(newBubble)
+
+        taskInputText = ""
+        showTaskInput = false
+        SoundManager.hapticLight()
     }
 
     // MARK: - 泡泡交互
@@ -442,6 +465,52 @@ struct BezierParticle: Identifiable {
     let color: Color
     let size: CGFloat
     var opacity: Double = 1.0
+}
+
+// MARK: - 任务输入界面
+struct TaskInputSheet: View {
+    @Binding var taskText: String
+    let onSubmit: () -> Void
+    @Environment(\.dismiss) var dismiss
+    @FocusState private var isTextFieldFocused: Bool
+
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                TextField("写下你的琐事...", text: $taskText, axis: .vertical)
+                    .font(.system(size: 16))
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color(hex: "F5F5F5"))
+                    )
+                    .focused($isTextFieldFocused)
+                    .lineLimit(3...6)
+                    .padding(.horizontal)
+                    .padding(.top, 20)
+
+                Spacer()
+            }
+            .navigationTitle("New Task")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        onSubmit()
+                    }
+                    .disabled(taskText.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .onAppear {
+                isTextFieldFocused = true
+            }
+        }
+    }
 }
 
 // MARK: - 缩放按钮样式

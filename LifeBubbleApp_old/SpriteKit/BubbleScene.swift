@@ -35,16 +35,16 @@ class BubbleScene: SKScene {
 
     // MARK: - 漂浮场设置
     private func setupFloatingFields() {
-        // 噪声场 - 模拟空气流动
-        let noiseField = SKFieldNode.noiseField(withSmoothness: 1.0, animationSpeed: 0.5)
-        noiseField.strength = 0.3
+        // 噪声场 - 模拟空气流动 (50% slower)
+        let noiseField = SKFieldNode.noiseField(withSmoothness: 1.0, animationSpeed: 0.25)
+        noiseField.strength = 0.15
         noiseField.position = CGPoint(x: size.width / 2, y: size.height / 2)
         noiseField.region = SKRegion(size: CGSize(width: size.width * 2, height: size.height * 2))
         addChild(noiseField)
 
-        // 湍流场 - 增加随机性
-        let turbulenceField = SKFieldNode.turbulenceField(withSmoothness: 0.8, animationSpeed: 0.8)
-        turbulenceField.strength = 0.15
+        // 湍流场 - 增加随机性 (50% slower)
+        let turbulenceField = SKFieldNode.turbulenceField(withSmoothness: 0.8, animationSpeed: 0.4)
+        turbulenceField.strength = 0.075
         turbulenceField.position = CGPoint(x: size.width / 2, y: size.height / 2)
         turbulenceField.region = SKRegion(size: CGSize(width: size.width * 2, height: size.height * 2))
         addChild(turbulenceField)
@@ -193,5 +193,48 @@ class BubbleScene: SKScene {
             bubble.physicsBody?.isDynamic = true
         }
         draggedBubble = nil
+    }
+
+    // MARK: - Update Loop - Keep bubbles within screen bounds
+    override func update(_ currentTime: TimeInterval) {
+        super.update(currentTime)
+
+        // Constrain all bubbles to stay within screen boundaries
+        for (_, bubbleNode) in bubbleNodes {
+            guard let physicsBody = bubbleNode.physicsBody else { continue }
+
+            let radius = physicsBody.area / .pi
+            let bubbleRadius = sqrt(radius)
+
+            var position = bubbleNode.position
+            var needsUpdate = false
+
+            // Check and constrain horizontal bounds
+            if position.x - bubbleRadius < 0 {
+                position.x = bubbleRadius
+                physicsBody.velocity.dx = abs(physicsBody.velocity.dx) * 0.3 // Soft bounce
+                needsUpdate = true
+            } else if position.x + bubbleRadius > size.width {
+                position.x = size.width - bubbleRadius
+                physicsBody.velocity.dx = -abs(physicsBody.velocity.dx) * 0.3 // Soft bounce
+                needsUpdate = true
+            }
+
+            // Check and constrain vertical bounds
+            if position.y - bubbleRadius < 0 {
+                position.y = bubbleRadius
+                physicsBody.velocity.dy = abs(physicsBody.velocity.dy) * 0.3 // Soft bounce
+                needsUpdate = true
+            } else if position.y + bubbleRadius > size.height {
+                position.y = size.height - bubbleRadius
+                physicsBody.velocity.dy = -abs(physicsBody.velocity.dy) * 0.3 // Soft bounce
+                needsUpdate = true
+            }
+
+            // Apply position correction if needed
+            if needsUpdate {
+                bubbleNode.position = position
+            }
+        }
     }
 }

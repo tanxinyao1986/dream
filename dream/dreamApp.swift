@@ -273,13 +273,14 @@ struct SoapBubbleView: View {
             size: size,
             baseColors: [
                 Color(hex: "FFD700"), // Gold
-                Color(hex: "FFA500"), // Orange
-                Color(hex: "FFB6C1"), // Pink
-                Color(hex: "87CEEB"), // Sky blue
-                Color(hex: "DDA0DD"), // Purple
-                Color(hex: "98FB98")  // Pale green - rainbow effect
+                Color(hex: "FF6B9D"), // Rose pink - 更饱和
+                Color(hex: "C77DFF"), // Bright purple - 更饱和
+                Color(hex: "4CC9F0"), // Cyan blue - 更饱和
+                Color(hex: "7FE3A0"), // Emerald green - 更饱和
+                Color(hex: "FF9770"), // Coral orange - 更饱和
+                Color(hex: "FFE66D")  // Bright yellow - 更饱和
             ],
-            intensity: 2.4
+            intensity: 3.2  // 增强强度，让颜色更鲜艳
         )
     }
 
@@ -745,7 +746,7 @@ struct HomeView: View {
                                 }
                             }
 
-                        Text("Long Press to Create")
+                        Text("长按吹出泡泡")
                             .font(.system(size: 11))
                             .foregroundColor(Color(hex: "6B6B6B").opacity(0.6))
                             .opacity(isLongPressingLaunch ? 0 : 1)
@@ -815,11 +816,11 @@ struct HomeView: View {
 
                         // Input card
                         VStack(spacing: 20) {
-                            Text("New Task")
+                            Text("新建琐事")
                                 .font(.system(size: 20, weight: .semibold))
                                 .foregroundColor(Color(hex: "6B6B6B"))
 
-                            TextField("What needs to be done?", text: $taskInputText)
+                            TextField("写下你的琐事...", text: $taskInputText)
                                 .focused($isTaskInputFocused)
                                 .font(.system(size: 16))
                                 .padding(16)
@@ -839,7 +840,7 @@ struct HomeView: View {
                                 Button(action: {
                                     dismissTaskInput()
                                 }) {
-                                    Text("Cancel")
+                                    Text("取消")
                                         .font(.system(size: 16, weight: .medium))
                                         .foregroundColor(Color(hex: "6B6B6B"))
                                         .frame(maxWidth: .infinity)
@@ -853,7 +854,7 @@ struct HomeView: View {
                                 Button(action: {
                                     createTaskBubble()
                                 }) {
-                                    Text("Create")
+                                    Text("创建")
                                         .font(.system(size: 16, weight: .semibold))
                                         .foregroundColor(.white)
                                         .frame(maxWidth: .infinity)
@@ -967,11 +968,39 @@ struct HomeView: View {
     }
 }
 
-// MARK: - ========== SpriteKit 泡泡系统（升级版）==========
-class BubbleNode: SKShapeNode {
+// MARK: - ========== SwiftUI to SpriteKit Snapshot Helper ==========
+@available(iOS 16.0, *)
+extension View {
+    func renderToSKTexture(size: CGSize) -> SKTexture? {
+        let renderer = ImageRenderer(content: self
+            .background(Color.clear)           // CRITICAL: Transparent background
+            .clipShape(Circle())                // CRITICAL: Round, not square
+            .compositingGroup()                 // Preserve transparency
+        )
+
+        renderer.proposedSize = ProposedViewSize(size)
+        renderer.isOpaque = false              // CRITICAL: Enable transparency
+        renderer.scale = UIScreen.main.scale   // Retina quality
+
+        if let uiImage = renderer.uiImage {
+            return SKTexture(image: uiImage)
+        }
+        return nil
+    }
+}
+
+// MARK: - ========== SpriteKit Soap Bubble System (SwiftUI Snapshot) ==========
+class BubbleNode: SKNode {
     let bubbleId: UUID
     let bubbleText: String
     let bubbleType: Bubble.BubbleType
+
+    // Store base color for particle effects
+    var baseColor: UIColor = .white
+
+    // Visual layers
+    private var bubbleSprite: SKSpriteNode!
+    private var textLabel: SKLabelNode!
 
     init(bubble: Bubble, radius: CGFloat) {
         self.bubbleId = bubble.id
@@ -979,24 +1008,30 @@ class BubbleNode: SKShapeNode {
         self.bubbleType = bubble.type
         super.init()
 
-        let circlePath = CGPath(ellipseIn: CGRect(x: -radius, y: -radius, width: radius * 2, height: radius * 2), transform: nil)
-        self.path = circlePath
+        let diameter = radius * 2
 
-        // 琐事泡泡使用莫兰迪灰调（低饱和度、高明度）
-        let choreColors = ["#B0C4DE", "#D8BFD8", "#B0D4B8", "#C9C3D6", "#C8D8E4"]
-        let randomChoreColor = choreColors.randomElement() ?? "#B0C4DE"
+        if bubbleType == .core {
+            // CORE BUBBLE: Render SplashView bubble to texture
+            self.baseColor = UIColor(Color(hex: "FFD700"))
+            let bubbleTexture = renderCoreBubbleTexture(size: diameter)
+            createBubbleSprite(texture: bubbleTexture, size: diameter)
+        } else {
+            // CHORE BUBBLE: Render ChatView-style bubble to texture
+            let hazyPalettes = [
+                ["FFFFFF", "FFB6C1", "CBA972"],  // Pink
+                ["FFFFFF", "B0E0E6", "CBA972"],  // Blue
+                ["FFFFFF", "F0E68C", "D2B48C"],  // Yellow
+                ["FFFFFF", "E0BBE4", "CBA972"],  // Lavender
+                ["FFFFFF", "ADD8E6", "9CB4CC"]   // Light Blue
+            ]
+            let chosenPalette = hazyPalettes.randomElement()!
+            self.baseColor = UIColor(Color(hex: chosenPalette[1]))
 
-        self.fillColor = bubbleType == .core ?
-            UIColor(Color(hex: "FFB6C1")).withAlphaComponent(0.15) :
-            UIColor(Color(hex: randomChoreColor)).withAlphaComponent(0.12)
-
-        self.strokeColor = UIColor.white.withAlphaComponent(0.5)
-        self.lineWidth = 2
-        self.glowWidth = 4
+            let bubbleTexture = renderChoreBubbleTexture(size: diameter, colors: chosenPalette)
+            createBubbleSprite(texture: bubbleTexture, size: diameter)
+        }
 
         setupPhysicsBody(radius: radius)
-        addIridescenceEffect(radius: radius)
-        addHighlight(radius: radius)
         addTextLabel(radius: radius)
         addBreathingAnimation()
     }
@@ -1005,72 +1040,155 @@ class BubbleNode: SKShapeNode {
         fatalError("init(coder:) has not been implemented")
     }
 
+    // MARK: - Snapshot Rendering
+    private func renderCoreBubbleTexture(size: CGFloat) -> SKTexture? {
+        if #available(iOS 16.0, *) {
+            // Use EXACT SoapBubbleView.splash configuration with soft edge
+            let bubbleView = SoapBubbleView.splash(size: size)
+                .overlay(
+                    // Add soft edge glow to remove harsh white line
+                    Circle()
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.4),
+                                    Color.white.opacity(0.0)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 3
+                        )
+                        .blur(radius: 2)
+                )
+            return bubbleView.renderToSKTexture(size: CGSize(width: size, height: size))
+        } else {
+            // Fallback for older iOS versions
+            return renderCoreBubbleFallback(size: size)
+        }
+    }
+
+    private func renderChoreBubbleTexture(size: CGFloat, colors: [String]) -> SKTexture? {
+        if #available(iOS 16.0, *) {
+            // Create bubble with hazy gradient (ChatView style)
+            let bubbleView = createChoreBubbleView(size: size, colorHexes: colors)
+            return bubbleView.renderToSKTexture(size: CGSize(width: size, height: size))
+        } else {
+            // Fallback for older iOS versions
+            return renderChoreBubbleFallback(size: size, colors: colors)
+        }
+    }
+
+    private func createChoreBubbleView(size: CGFloat, colorHexes: [String]) -> some View {
+        Circle()
+            .fill(
+                RadialGradient(
+                    colors: [
+                        Color(hex: colorHexes[0]).opacity(0.9),
+                        Color(hex: colorHexes[1]).opacity(0.6),
+                        Color(hex: colorHexes[2]).opacity(0.4)
+                    ],
+                    center: .center,
+                    startRadius: 0,
+                    endRadius: size * 0.5
+                )
+            )
+            .shadow(color: .white.opacity(0.3), radius: 3, x: 0, y: 0)  // Soft glow instead of hard stroke
+            .frame(width: size, height: size)
+    }
+
+    // Fallback for iOS < 16
+    private func renderCoreBubbleFallback(size: CGFloat) -> SKTexture? {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+        let image = renderer.image { _ in
+            // Simple fallback gradient
+            let colors = [
+                UIColor(Color(hex: "FFD700")),
+                UIColor(Color(hex: "FFA500")),
+                UIColor(Color(hex: "FFB6C1"))
+            ]
+            let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                     colors: colors.map { $0.cgColor } as CFArray,
+                                     locations: [0.0, 0.5, 1.0])!
+            UIGraphicsGetCurrentContext()?.drawRadialGradient(gradient,
+                                                             startCenter: CGPoint(x: size/2, y: size/2),
+                                                             startRadius: 0,
+                                                             endCenter: CGPoint(x: size/2, y: size/2),
+                                                             endRadius: size/2,
+                                                             options: [])
+        }
+        return SKTexture(image: image)
+    }
+
+    private func renderChoreBubbleFallback(size: CGFloat, colors: [String]) -> SKTexture? {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+        let image = renderer.image { _ in
+            let uiColors = colors.map { UIColor(Color(hex: $0)) }
+            let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                     colors: uiColors.map { $0.cgColor } as CFArray,
+                                     locations: [0.0, 0.5, 1.0])!
+            UIGraphicsGetCurrentContext()?.drawRadialGradient(gradient,
+                                                             startCenter: CGPoint(x: size/2, y: size/2),
+                                                             startRadius: 0,
+                                                             endCenter: CGPoint(x: size/2, y: size/2),
+                                                             endRadius: size/2,
+                                                             options: [])
+        }
+        return SKTexture(image: image)
+    }
+
+    private func createBubbleSprite(texture: SKTexture?, size: CGFloat) {
+        let sprite = SKSpriteNode(texture: texture)
+        sprite.size = CGSize(width: size, height: size)
+        sprite.zPosition = 0
+        self.addChild(sprite)
+        self.bubbleSprite = sprite
+
+        // RESTORE ANIMATIONS (lost in snapshot)
+        addBubblePulseAnimation(to: sprite)
+
+        if bubbleType == .core {
+            addRotationAnimation(to: sprite)  // Simulate angular gradient rotation
+        }
+    }
+
+    // MARK: - Animation Restoration
+    private func addBubblePulseAnimation(to sprite: SKSpriteNode) {
+        // Breathing effect (like SplashView)
+        let scaleUp = SKAction.scale(to: 1.05, duration: 3.0)
+        let scaleDown = SKAction.scale(to: 0.95, duration: 3.0)
+        scaleUp.timingMode = .easeInEaseOut
+        scaleDown.timingMode = .easeInEaseOut
+
+        let breathe = SKAction.sequence([scaleUp, scaleDown])
+        sprite.run(SKAction.repeatForever(breathe), withKey: "breathe")
+    }
+
+    private func addRotationAnimation(to sprite: SKSpriteNode) {
+        // Slow rotation to simulate angular gradient movement (like SplashView)
+        let rotate = SKAction.rotate(byAngle: .pi * 2, duration: 12.0)
+        sprite.run(SKAction.repeatForever(rotate), withKey: "rotate")
+    }
+
+    // MARK: - Physics Setup
     private func setupPhysicsBody(radius: CGFloat) {
         self.physicsBody = SKPhysicsBody(circleOfRadius: radius)
         self.physicsBody?.isDynamic = true
         self.physicsBody?.mass = bubbleType == .core ? 1.5 : 0.8
         self.physicsBody?.friction = 0.0
         self.physicsBody?.restitution = 0.6
-        self.physicsBody?.linearDamping = 3.5  // Increased significantly for lazy floating (like soap bubbles in heavy air)
+        self.physicsBody?.linearDamping = 5.0  // Increased from 4.0 for 50% slower movement
         self.physicsBody?.angularDamping = 0.8
         self.physicsBody?.allowsRotation = false
         self.physicsBody?.categoryBitMask = 1
         self.physicsBody?.contactTestBitMask = 1
         self.physicsBody?.collisionBitMask = 1
 
-        // Reduce initial velocity by another 50% (10 instead of 20)
-        self.physicsBody?.velocity = CGVector(dx: CGFloat.random(in: -10...10), dy: CGFloat.random(in: -10...10))
-    }
-
-    private func addIridescenceEffect(radius: CGFloat) {
-        let iridescence = SKShapeNode(circleOfRadius: radius)
-        // Enhanced rainbow iridescence for both core and chore bubbles
-        iridescence.fillColor = bubbleType == .core ?
-            UIColor(Color(hex: "DDA0DD")).withAlphaComponent(0.35) :
-            UIColor(Color(hex: "FFD700")).withAlphaComponent(0.28)  // More vibrant base color
-        iridescence.strokeColor = .clear
-        iridescence.blendMode = .add
-        iridescence.zPosition = 1
-        self.addChild(iridescence)
-
-        // Rainbow color cycling for magical effect
-        let colorSequence = bubbleType == .core ?
-            [
-                UIColor(Color(hex: "FFB6C1")).withAlphaComponent(0.4),  // Pink
-                UIColor(Color(hex: "DDA0DD")).withAlphaComponent(0.4),  // Purple
-                UIColor(Color(hex: "87CEEB")).withAlphaComponent(0.4),  // Sky blue
-                UIColor(Color(hex: "FFD700")).withAlphaComponent(0.4)   // Gold
-            ] :
-            [
-                UIColor(Color(hex: "FFB6C1")).withAlphaComponent(0.35),  // Pink - rainbow effect
-                UIColor(Color(hex: "87CEEB")).withAlphaComponent(0.35),  // Sky blue
-                UIColor(Color(hex: "98FB98")).withAlphaComponent(0.35),  // Pale green
-                UIColor(Color(hex: "DDA0DD")).withAlphaComponent(0.35)   // Purple
-            ]
-
-        var colorActions: [SKAction] = []
-        for color in colorSequence {
-            colorActions.append(SKAction.colorize(with: color, colorBlendFactor: 1.0, duration: 3.0))
-        }
-
-        let colorCycle = SKAction.sequence(colorActions)
-        iridescence.run(SKAction.repeatForever(colorCycle))
-    }
-
-    private func addHighlight(radius: CGFloat) {
-        // Stronger, larger white specular highlight for wet/shiny look
-        let highlight = SKShapeNode(circleOfRadius: radius * 0.4)
-        highlight.position = CGPoint(x: -radius * 0.3, y: radius * 0.3)
-        highlight.fillColor = UIColor.white.withAlphaComponent(0.85)  // Much stronger
-        highlight.strokeColor = .clear
-        highlight.zPosition = 2
-        self.addChild(highlight)
-
-        // More dramatic pulsing for gloss effect
-        let fadeOut = SKAction.fadeAlpha(to: 0.6, duration: 1.8)
-        let fadeIn = SKAction.fadeAlpha(to: 0.95, duration: 1.8)
-        let pulse = SKAction.sequence([fadeOut, fadeIn])
-        highlight.run(SKAction.repeatForever(pulse))
+        // 50% slower initial velocity (reduced from -8...8 to -4...4)
+        self.physicsBody?.velocity = CGVector(
+            dx: CGFloat.random(in: -4...4),
+            dy: CGFloat.random(in: -4...4)
+        )
     }
 
     private func addTextLabel(radius: CGFloat) {
@@ -1082,22 +1200,32 @@ class BubbleNode: SKShapeNode {
         label.horizontalAlignmentMode = .center
         label.numberOfLines = 0
         label.preferredMaxLayoutWidth = radius * 1.6
-        label.zPosition = 3
+        label.zPosition = 4
+
         self.addChild(label)
+        self.textLabel = label
     }
 
     private func addBreathingAnimation() {
-        let scaleUp = SKAction.scale(to: 1.05, duration: Double.random(in: 3...5))
-        let scaleDown = SKAction.scale(to: 1.0, duration: Double.random(in: 3...5))
+        // Additional subtle whole-node breathing (on top of sprite pulse)
+        let scaleUp = SKAction.scale(to: 1.02, duration: Double.random(in: 4...6))
+        let scaleDown = SKAction.scale(to: 1.0, duration: Double.random(in: 4...6))
+        scaleUp.timingMode = .easeInEaseOut
+        scaleDown.timingMode = .easeInEaseOut
         let breathe = SKAction.sequence([scaleUp, scaleDown])
-        self.run(SKAction.repeatForever(breathe))
+        self.run(SKAction.repeatForever(breathe), withKey: "nodeBreathing")
     }
 
     func burst(completion: @escaping () -> Void) {
-        self.removeAllActions()
+        // Stop all animations
+        self.removeAction(forKey: "nodeBreathing")
+        bubbleSprite?.removeAction(forKey: "breathe")
+        bubbleSprite?.removeAction(forKey: "rotate")
+
         let scale = SKAction.scale(to: 1.3, duration: 0.2)
         let fade = SKAction.fadeOut(withDuration: 0.2)
         let group = SKAction.group([scale, fade])
+
         self.run(group) {
             completion()
         }
@@ -1127,30 +1255,68 @@ class BubbleScene: SKScene {
     }
 
     private func setupPhysicsWorld() {
-        physicsWorld.gravity = CGVector(dx: 0, dy: -0.1)  // 降低重力（从-0.2减到-0.1）
-        physicsWorld.speed = 1.0
+        physicsWorld.gravity = CGVector(dx: 0, dy: -0.05)  // Reduced by 50% for slower movement
+        physicsWorld.speed = 0.75  // Reduce overall physics speed by 25%
     }
 
     private func setupFloatingFields() {
-        let noiseField = SKFieldNode.noiseField(withSmoothness: 1.0, animationSpeed: 0.3)  // 降低动画速度
-        noiseField.strength = 0.15  // 降低强度（从0.3减到0.15）
+        // Reduce field strengths by 50% for slower movement
+        let noiseField = SKFieldNode.noiseField(withSmoothness: 1.0, animationSpeed: 0.15)
+        noiseField.strength = 0.075  // Reduced by 50% from 0.15
         noiseField.position = CGPoint(x: size.width / 2, y: size.height / 2)
         noiseField.region = SKRegion(size: CGSize(width: size.width * 2, height: size.height * 2))
         addChild(noiseField)
 
-        let turbulenceField = SKFieldNode.turbulenceField(withSmoothness: 0.8, animationSpeed: 0.5)  // 降低动画速度
-        turbulenceField.strength = 0.08  // 降低强度（从0.15减到0.08）
+        let turbulenceField = SKFieldNode.turbulenceField(withSmoothness: 0.8, animationSpeed: 0.25)
+        turbulenceField.strength = 0.04  // Reduced by 50% from 0.08
         turbulenceField.position = CGPoint(x: size.width / 2, y: size.height / 2)
         turbulenceField.region = SKRegion(size: CGSize(width: size.width * 2, height: size.height * 2))
         addChild(turbulenceField)
 
-        // Inset physics bounds to keep bubbles strictly within visible safe area
+        // Larger inset to keep bubbles well within screen bounds (not touching edges)
         let boundaryRect = CGRect(x: 0, y: 0, width: size.width, height: size.height)
-        let insetBounds = boundaryRect.insetBy(dx: 10, dy: 50)
+        let insetBounds = boundaryRect.insetBy(dx: 50, dy: 100)  // Increased inset
         let boundary = SKPhysicsBody(edgeLoopFrom: insetBounds)
         boundary.friction = 0.0
-        boundary.restitution = 0.5
+        boundary.restitution = 0.4  // Softer bounce to keep bubbles from edges
         physicsBody = boundary
+
+        // Add edge repulsion forces to keep bubbles away from screen edges
+        addEdgeRepulsionFields()
+    }
+
+    private func addEdgeRepulsionFields() {
+        // Create invisible repulsion fields at screen edges to gently push bubbles inward
+        let edgeStrength: Float = 2.0
+        let edgeWidth: CGFloat = 80
+
+        // Left edge
+        let leftField = SKFieldNode.radialGravityField()
+        leftField.strength = -edgeStrength
+        leftField.position = CGPoint(x: edgeWidth / 2, y: size.height / 2)
+        leftField.region = SKRegion(size: CGSize(width: edgeWidth, height: size.height))
+        addChild(leftField)
+
+        // Right edge
+        let rightField = SKFieldNode.radialGravityField()
+        rightField.strength = -edgeStrength
+        rightField.position = CGPoint(x: size.width - edgeWidth / 2, y: size.height / 2)
+        rightField.region = SKRegion(size: CGSize(width: edgeWidth, height: size.height))
+        addChild(rightField)
+
+        // Top edge
+        let topField = SKFieldNode.radialGravityField()
+        topField.strength = -edgeStrength
+        topField.position = CGPoint(x: size.width / 2, y: size.height - edgeWidth / 2)
+        topField.region = SKRegion(size: CGSize(width: size.width, height: edgeWidth))
+        addChild(topField)
+
+        // Bottom edge
+        let bottomField = SKFieldNode.radialGravityField()
+        bottomField.strength = -edgeStrength
+        bottomField.position = CGPoint(x: size.width / 2, y: edgeWidth / 2)
+        bottomField.region = SKRegion(size: CGSize(width: size.width, height: edgeWidth))
+        addChild(bottomField)
     }
 
     func addBubble(bubble: Bubble, at position: CGPoint? = nil) {
@@ -1192,7 +1358,7 @@ class BubbleScene: SKScene {
         guard let bubbleNode = bubbleNodes[id] else { return }
 
         let bubblePos = bubbleNode.position
-        let bubbleColor = bubbleNode.fillColor
+        let bubbleColor = bubbleNode.baseColor
 
         SoundManager.hapticMedium()
         SoundManager.shared.playBubblePop()
