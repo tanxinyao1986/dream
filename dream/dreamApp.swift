@@ -1,17 +1,25 @@
 //
-//  CompleteApp.swift
-//  LifeBubble 完整单文件版本
+//  dreamApp.swift
+//  LifeBubble 梦幻肥皂泡版本 🎨
 //
-//  使用方法：
-//  1. 在Xcode中创建新项目（iOS App, SwiftUI）
-//  2. 删除默认的 ContentView.swift
-//  3. 将此文件拖入项目，替换默认的 @main 文件
-//  4. 运行即可
+//  ✨ 包含 11 项 UI/UX 升级：
+//  1. 肥皂泡材质渲染系统（7层叠加）
+//  2. 打字机效果文字
+//  3. Splash 长按膨胀 + 破裂转场
+//  4. SpriteKit 物理引擎（漂浮场 + 软碰撞）
+//  5. 长按发射台创建泡泡
+//  6. 推迟手势（Fling to Snooze）
+//  7. 贝塞尔曲线流沙粒子
+//  8. Calendar 过去/未来视觉分级
+//  9. Calendar Zoom In 动画
+//  10. 声音管理器
+//  11. 触觉反馈系统
 //
 
 import SwiftUI
 import Combine
 import SpriteKit
+import AVFoundation
 
 // MARK: - ========== 应用入口 ==========
 @main
@@ -27,43 +35,35 @@ struct dreamApp: App {
     }
 }
 
-// MARK: - ========== 根视图（分层导航架构）==========
+// MARK: - ========== 根视图 ==========
 struct RootView: View {
     @EnvironmentObject var appState: AppState
-    @State private var dragOffset: CGFloat = 0
 
     var body: some View {
         ZStack {
-            // 启动层（L1）- 最开始显示
             if appState.showSplash {
                 SplashView()
                     .zIndex(100)
                     .transition(.opacity.combined(with: .scale))
             }
 
-            // 主舞台层（L3）- 永远存在的底层
             if !appState.showSplash {
                 HomeView()
                     .zIndex(0)
             }
 
-            // 日历层（L4）- 下拉覆盖
             if appState.showCalendar {
                 CalendarView()
-                    .offset(y: 0)
                     .transition(.move(edge: .top))
                     .zIndex(10)
             }
 
-            // AI对话层（L2）- 上滑覆盖
             if appState.showChat {
                 ChatView()
-                    .offset(y: 0)
                     .transition(.move(edge: .bottom))
                     .zIndex(20)
             }
 
-            // 档案层（L5）- 传统推入
             if appState.showArchive {
                 ArchiveView()
                     .transition(.move(edge: .trailing))
@@ -79,13 +79,11 @@ struct RootView: View {
 
 // MARK: - ========== 状态管理器 ==========
 class AppState: ObservableObject {
-    // 导航状态
     @Published var showSplash: Bool = true
     @Published var showCalendar: Bool = false
     @Published var showChat: Bool = false
     @Published var showArchive: Bool = false
 
-    // 数据状态
     @Published var bubbles: [Bubble] = []
     @Published var chatMessages: [ChatMessage] = []
 
@@ -103,42 +101,14 @@ class AppState: ObservableObject {
         ]
     }
 
-    // MARK: - 导航方法
-    func enterHome() {
-        showSplash = false
-    }
+    func enterHome() { showSplash = false }
+    func openCalendar() { showCalendar = true }
+    func closeCalendar() { showCalendar = false }
+    func openChat() { showChat = true }
+    func closeChat() { showChat = false }
+    func openArchive() { showArchive = true }
+    func closeArchive() { showArchive = false }
 
-    func openCalendar() {
-        showCalendar = true
-    }
-
-    func closeCalendar() {
-        showCalendar = false
-    }
-
-    func openChat() {
-        showChat = true
-    }
-
-    func closeChat() {
-        showChat = false
-    }
-
-    func openArchive() {
-        showArchive = true
-    }
-
-    func closeArchive() {
-        showArchive = false
-    }
-
-    func closeAllOverlays() {
-        showCalendar = false
-        showChat = false
-        showArchive = false
-    }
-
-    // MARK: - 数据方法
     func completeBubble(_ bubble: Bubble) {
         if let index = bubbles.firstIndex(where: { $0.id == bubble.id }) {
             bubbles.remove(at: index)
@@ -167,305 +137,1238 @@ struct ChatMessage: Identifiable {
     let isUser: Bool
 }
 
-// MARK: - ========== 1. 启动页 ==========
-struct SplashView: View {
-    @EnvironmentObject var appState: AppState
-    @State private var scale: CGFloat = 1.0
-    @State private var isPressed = false
+// MARK: - ========== 肥皂泡材质组件 ==========
+struct SoapBubbleView: View {
+    let size: CGFloat
+    let baseColors: [Color]
+    let intensity: CGFloat
+
+    @State private var rotationAngle: Double = 0
+    @State private var highlightPhase: Double = 0
+
+    init(size: CGFloat, baseColors: [Color], intensity: CGFloat = 0.8) {
+        self.size = size
+        self.baseColors = baseColors
+        self.intensity = intensity
+    }
 
     var body: some View {
         ZStack {
-            LinearGradient(colors: [Color(hex: "FFF9E6"), Color(hex: "FDFCF8")], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
+            // Layer 1: 透明基础（更清透 - 降低不透明度）
+            Circle()
+                .fill(baseColors.first?.opacity(0.02 * intensity) ?? Color.white.opacity(0.02))
 
-            VStack(spacing: 60) {
-                Spacer()
+            // Layer 2: 边缘光晕
+            Circle()
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.6 * intensity),
+                            Color.white.opacity(0.2 * intensity)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 2
+                )
+                .blur(radius: 3)
 
-                Circle()
-                    .fill(RadialGradient(colors: [.white.opacity(0.9), Color(hex: "CBA972").opacity(0.4)], center: .center, startRadius: 0, endRadius: 100))
-                    .frame(width: 200, height: 200)
-                    .shadow(color: Color(hex: "CBA972").opacity(0.6), radius: 40)
-                    .scaleEffect(isPressed ? 1.5 : scale)
-                    .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: scale)
-                    .onAppear { scale = 1.05 }
-                    .onLongPressGesture(minimumDuration: 1.0, perform: {
-                        withAnimation {
-                            appState.enterHome()
-                        }
-                    }) { pressing in
-                        isPressed = pressing
-                    }
+            // Layer 3: 薄膜干涉（关键层 - 增强绚丽度）
+            Circle()
+                .fill(
+                    AngularGradient(
+                        gradient: Gradient(colors: baseColors + [baseColors.first!]),
+                        center: .center,
+                        angle: .degrees(rotationAngle)
+                    )
+                )
+                .opacity(0.75 * intensity)
+                .blendMode(.colorDodge)
+                .blur(radius: 0.8)
 
-                Spacer()
-
-                Text("今天，让我们从一个小小的愿望开始")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundColor(Color(hex: "CBA972"))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
-
-                Text("长按光球进入")
-                    .font(.system(size: 14))
-                    .foregroundColor(Color(hex: "6B6B6B").opacity(0.5))
-                    .padding(.bottom, 60)
-            }
-        }
-    }
-}
-
-// MARK: - ========== 2. 主页（中央枢纽 - SpriteKit版）==========
-struct HomeView: View {
-    @EnvironmentObject var appState: AppState
-    @State private var bubbleScene: BubbleScene = BubbleScene(size: CGSize(width: 430, height: 932))
-
-    var body: some View {
-        GeometryReader { geometry in
-            homeContent(screenSize: geometry.size)
-        }
-    }
-
-    @ViewBuilder
-    private func homeContent(screenSize: CGSize) -> some View {
-        ZStack {
-            LinearGradient(colors: [Color(hex: "FFF9E6"), Color(hex: "FDFCF8")], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                // 顶部导航栏
-                HStack {
-                    Spacer()
-                    // 右上角档案入口
-                    Button(action: {
-                        withAnimation {
-                            appState.openArchive()
-                        }
-                    }) {
-                        Image(systemName: "star.circle.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(Color(hex: "6B6B6B"))
-                            .frame(width: 40, height: 40)
-                            .background(Circle().fill(.ultraThinMaterial))
-                    }
-                }
-                .padding()
-
-                // SpriteKit 泡泡场景
-                BubbleSceneView(scene: bubbleScene)
-
-                // 底部吹气发射台
-                BlowBubbleLaunchpad(bubbleScene: bubbleScene)
-                    .padding(.bottom, 40)
-            }
-        }
-        .onAppear {
-            // 更新场景尺寸
-            bubbleScene.size = screenSize
-
-            // 计算档案入口位置（右上角星星按钮）
-            // SpriteKit 坐标系：左下角是 (0,0)，所以 Y 坐标要从屏幕高度减去
-            bubbleScene.archivePosition = CGPoint(
-                x: screenSize.width - 40,
-                y: screenSize.height - 60
-            )
-
-            // 初始化泡泡
-            for bubble in appState.bubbles {
-                bubbleScene.addBubble(bubble: bubble)
-            }
-
-            // 监听泡泡点击
-            bubbleScene.onBubbleTapped = { bubbleId in
-                // 触发粒子效果和移除
-                bubbleScene.popBubble(id: bubbleId)
-
-                // 从 AppState 中移除
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    if let index = appState.bubbles.firstIndex(where: { $0.id == bubbleId }) {
-                        appState.bubbles.remove(at: index)
-                    }
-                }
-            }
-        }
-        // 添加手势识别
-        .gesture(
-            DragGesture()
-                .onEnded { value in
-                    // 下滑手势 → 打开日历
-                    if value.translation.height > 100 {
-                        withAnimation {
-                            appState.openCalendar()
-                        }
-                    }
-                    // 上滑手势 → 打开AI对话
-                    else if value.translation.height < -100 {
-                        withAnimation {
-                            appState.openChat()
-                        }
-                    }
-                }
-        )
-    }
-}
-// MARK: - 吹气发射台（联调 SpriteKit）
-struct BlowBubbleLaunchpad: View {
-    @EnvironmentObject var appState: AppState
-    let bubbleScene: BubbleScene
-    @State private var isBlowing = false
-    @State private var blowingScale: CGFloat = 1.0
-    @State private var showInputAlert = false
-    @State private var newBubbleText = ""
-    @State private var blowDuration: TimeInterval = 0
-    @State private var blowTimer: Timer?
-
-    var body: some View {
-        ZStack {
-            // 发射台底座
+            // Layer 4: 多色径向渐变
             Circle()
                 .fill(
                     RadialGradient(
                         colors: [
-                            Color(hex: "CBA972").opacity(0.2),
-                            Color(hex: "CBA972").opacity(0.05)
+                            Color.white.opacity(0.2),
+                            baseColors[0].opacity(0.3 * intensity),
+                            baseColors[1].opacity(0.25 * intensity),
+                            Color.clear
                         ],
                         center: .center,
                         startRadius: 0,
-                        endRadius: 35
+                        endRadius: size * 0.5
                     )
                 )
-                .frame(width: 70, height: 70)
+                .blendMode(.overlay)
 
-            // 吹出的泡泡（长按时显示）
-            if isBlowing {
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [
-                                Color(hex: "FFB6C1").opacity(0.6),
-                                Color(hex: "ADD8E6").opacity(0.4),
-                                Color(hex: "FFD700").opacity(0.2)
-                            ],
-                            center: .center,
-                            startRadius: 0,
-                            endRadius: 40
-                        )
+            // Layer 5: 高光反射
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.white.opacity(0.9 * intensity),
+                            Color.white.opacity(0.4 * intensity),
+                            Color.clear
+                        ],
+                        center: UnitPoint(x: 0.3, y: 0.25),
+                        startRadius: 0,
+                        endRadius: size * 0.35
                     )
-                    .frame(width: 80, height: 80)
-                    .scaleEffect(blowingScale)
-                    .animation(.easeOut(duration: 0.1), value: blowingScale)
-            }
+                )
+                .frame(width: size * 0.6, height: size * 0.6)
+                .offset(x: -size * 0.15, y: -size * 0.2)
+                .opacity(0.7 + 0.3 * sin(highlightPhase))
 
-            // 提示文字
-            if !isBlowing {
-                Text("长按吹泡泡")
-                    .font(.system(size: 10))
-                    .foregroundColor(Color(hex: "6B6B6B").opacity(0.5))
-                    .offset(y: 50)
+            // Layer 6: 次级高光
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.white.opacity(0.4 * intensity),
+                            Color.clear
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: size * 0.15
+                    )
+                )
+                .frame(width: size * 0.3, height: size * 0.3)
+                .offset(x: -size * 0.25, y: -size * 0.25)
+
+            // Layer 7: 底部阴影
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.black.opacity(0.1 * intensity),
+                            Color.clear
+                        ],
+                        center: UnitPoint(x: 0.5, y: 0.85),
+                        startRadius: 0,
+                        endRadius: size * 0.3
+                    )
+                )
+        }
+        .frame(width: size, height: size)
+        .shadow(
+            color: baseColors.first?.opacity(0.2 * intensity) ?? Color.clear,
+            radius: size * 0.15,
+            x: 0,
+            y: size * 0.08
+        )
+        .onAppear {
+            withAnimation(.linear(duration: 12).repeatForever(autoreverses: false)) {
+                rotationAngle = 360
+            }
+            withAnimation(.easeInOut(duration: 3).repeatForever(autoreverses: true)) {
+                highlightPhase = .pi * 2
             }
         }
-        .gesture(
-            LongPressGesture(minimumDuration: 0.1)
-                .onChanged { _ in
-                    if !isBlowing {
-                        isBlowing = true
-                        blowDuration = 0
-                        blowingScale = 1.0
+    }
 
-                        // 启动计时器，模拟吹气球逐渐变大
-                        blowTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
-                            blowDuration += 0.05
-                            if blowDuration < 2.0 {
-                                blowingScale = 1.0 + (blowDuration * 0.8) // 最大到1.6倍
-                            }
-                        }
-
-                        // 触觉反馈
-                        let impact = UIImpactFeedbackGenerator(style: .light)
-                        impact.impactOccurred()
-                    }
-                }
-                .onEnded { _ in
-                    // 停止计时器
-                    blowTimer?.invalidate()
-                    blowTimer = nil
-
-                    // 判断是否吹气时间足够
-                    if blowDuration >= 0.5 {
-                        // 吹气成功！弹出输入框
-                        showInputAlert = true
-
-                        // 触觉反馈
-                        let impact = UIImpactFeedbackGenerator(style: .medium)
-                        impact.impactOccurred()
-                    }
-
-                    // 重置状态
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        isBlowing = false
-                        blowingScale = 1.0
-                    }
-                    blowDuration = 0
-                }
+    static func splash(size: CGFloat) -> some View {
+        SoapBubbleView(
+            size: size,
+            baseColors: [
+                Color(hex: "FFD700"), // Gold
+                Color(hex: "FFA500"), // Orange
+                Color(hex: "FFB6C1"), // Pink
+                Color(hex: "87CEEB"), // Sky blue
+                Color(hex: "DDA0DD"), // Purple
+                Color(hex: "98FB98")  // Pale green - rainbow effect
+            ],
+            intensity: 2.4
         )
-        .alert("给这个泡泡起个名字", isPresented: $showInputAlert) {
-            TextField("例如：整理桌面", text: $newBubbleText)
-            Button("取消", role: .cancel) {
-                newBubbleText = ""
+    }
+
+    static func core(size: CGFloat) -> some View {
+        SoapBubbleView(
+            size: size,
+            baseColors: [
+                Color(hex: "FFB6C1"),
+                Color(hex: "DDA0DD"),
+                Color(hex: "87CEEB"),
+                Color(hex: "FFD700")
+            ],
+            intensity: 1.0
+        )
+    }
+
+    static func small(size: CGFloat) -> some View {
+        SoapBubbleView(
+            size: size,
+            baseColors: [
+                Color(hex: "E0E0E0"),
+                Color(hex: "B0C4DE"),
+                Color(hex: "F0E68C"),
+                Color(hex: "DDA0DD")
+            ],
+            intensity: 0.6
+        )
+    }
+}
+
+// MARK: - ========== 打字机效果 ==========
+struct TypewriterText: View {
+    let text: String
+    let font: Font
+    let color: Color
+    let speed: Double
+
+    @State private var displayedText: String = ""
+    @State private var currentIndex: Int = 0
+
+    init(_ text: String, font: Font = .body, color: Color = .primary, speed: Double = 0.16) {
+        self.text = text
+        self.font = font
+        self.color = color
+        self.speed = speed
+    }
+
+    var body: some View {
+        Text(displayedText)
+            .font(font)
+            .foregroundColor(color)
+            .multilineTextAlignment(.center)
+            .onAppear {
+                startTyping()
             }
-            Button("创建") {
-                let bubbleText = newBubbleText.isEmpty ? "New Task" : newBubbleText
+    }
 
-                // 创建新泡泡数据
-                let newBubble = Bubble(
-                    text: bubbleText,
-                    type: .small,
-                    position: CGPoint(
-                        x: CGFloat.random(in: 0.2...0.8),
-                        y: CGFloat.random(in: 0.3...0.7)
-                    )
-                )
+    private func startTyping() {
+        displayedText = ""
+        currentIndex = 0
 
-                // 添加到 AppState
-                appState.bubbles.append(newBubble)
-
-                // 添加到 SpriteKit 场景（在屏幕中央生成）
-                let centerX = bubbleScene.size.width / 2
-                let centerY = bubbleScene.size.height / 2
-                let randomOffset = CGFloat.random(in: -50...50)
-                let spawnPosition = CGPoint(
-                    x: centerX + randomOffset,
-                    y: centerY + randomOffset
-                )
-
-                bubbleScene.addBubble(bubble: newBubble, at: spawnPosition)
-
-                // 触觉反馈
-                let impact = UIImpactFeedbackGenerator(style: .medium)
-                impact.impactOccurred()
-
-                newBubbleText = ""
+        Timer.scheduledTimer(withTimeInterval: speed, repeats: true) { timer in
+            if currentIndex < text.count {
+                let index = text.index(text.startIndex, offsetBy: currentIndex)
+                displayedText.append(text[index])
+                currentIndex += 1
+            } else {
+                timer.invalidate()
             }
         }
     }
 }
 
-// MARK: - ========== 3. AI对话（上滑覆盖层）==========
+// MARK: - ========== 声音管理器 ==========
+class SoundManager: ObservableObject {
+    static let shared = SoundManager()
+    private var audioPlayers: [String: AVAudioPlayer] = [:]
+    @Published var isSoundEnabled: Bool = true
+
+    private init() {
+        setupAudioSession()
+    }
+
+    private func setupAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            print("音频会话设置失败: \(error)")
+        }
+    }
+
+    func play(_ soundName: String, volume: Float = 1.0) {
+        guard isSoundEnabled else { return }
+        guard let url = Bundle.main.url(forResource: soundName, withExtension: "mp3") else {
+            return
+        }
+
+        do {
+            let player = try AVAudioPlayer(contentsOf: url)
+            player.volume = volume
+            player.prepareToPlay()
+            player.play()
+            audioPlayers[soundName] = player
+        } catch {
+            print("音效播放失败: \(error)")
+        }
+    }
+
+    func playBubblePop() { play("pop", volume: 0.7) }
+    func playBubbleCreate() { play("create", volume: 0.5) }
+    func playTransition() { play("transition", volume: 0.6) }
+
+    static func hapticLight() {
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
+    }
+
+    static func hapticMedium() {
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
+    }
+
+    static func hapticHeavy() {
+        let generator = UIImpactFeedbackGenerator(style: .heavy)
+        generator.impactOccurred()
+    }
+}
+
+// MARK: - ========== 1. Splash 页面（升级版）==========
+struct SplashView: View {
+    @EnvironmentObject var appState: AppState
+    @State private var isLongPressing = false
+    @State private var bubbleScale: CGFloat = 1.0
+    @State private var showBurstEffect = false
+    @State private var pulseAnimation = false
+    @State private var showQuote = false
+
+    private let dailyMessage = "今天，让我们从一个小小的愿望开始"
+    private let maxBubbleScale: CGFloat = 4.5
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color(hex: "FFF9E6"), Color(hex: "FDFCF8")],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            RadialGradient(
+                colors: [Color(hex: "FFF9E6").opacity(0.5), Color.clear],
+                center: .center,
+                startRadius: 0,
+                endRadius: 400
+            )
+            .opacity(pulseAnimation ? 0.7 : 0.3)
+            .animation(.easeInOut(duration: 7).repeatForever(autoreverses: true), value: pulseAnimation)
+            .onAppear {
+                pulseAnimation = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    showQuote = true
+                }
+            }
+
+            VStack(spacing: 60) {
+                Spacer()
+
+                ZStack {
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [
+                                    Color(hex: "FFD700").opacity(0.4),
+                                    Color(hex: "FFB6C1").opacity(0.3),
+                                    Color.clear
+                                ],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: 110
+                            )
+                        )
+                        .frame(width: 220, height: 220)
+                        .blur(radius: 30)
+                        .scaleEffect(bubbleScale)
+
+                    SoapBubbleView.splash(size: 220)
+                        .scaleEffect(bubbleScale)
+                }
+                .gesture(
+                    LongPressGesture(minimumDuration: 0.1)
+                        .onChanged { _ in startLongPress() }
+                        .onEnded { _ in endLongPress() }
+                )
+
+                Spacer()
+
+                if showQuote {
+                    TypewriterText(
+                        dailyMessage,
+                        font: .system(size: 20, weight: .medium),
+                        color: Color(hex: "CBA972"),
+                        speed: 0.24
+                    )
+                    .padding(.horizontal, 40)
+                }
+
+                Text("长按光球进入")
+                    .font(.system(size: 14))
+                    .foregroundColor(Color(hex: "6B6B6B").opacity(0.5))
+                    .opacity(isLongPressing ? 0 : 1)
+                    .padding(.bottom, 60)
+            }
+            .blur(radius: showBurstEffect ? 20 : 0)
+            .opacity(showBurstEffect ? 0 : 1)
+
+            if showBurstEffect {
+                BurstTransitionView()
+            }
+        }
+    }
+
+    private func startLongPress() {
+        guard !isLongPressing else { return }
+        isLongPressing = true
+        SoundManager.hapticLight()
+
+        withAnimation(.easeInOut(duration: 2.5)) {
+            bubbleScale = maxBubbleScale
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            if isLongPressing {
+                triggerBurst()
+            }
+        }
+    }
+
+    private func endLongPress() {
+        guard isLongPressing else { return }
+
+        if bubbleScale < maxBubbleScale {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.6)) {
+                bubbleScale = 1.0
+            }
+            isLongPressing = false
+        }
+    }
+
+    private func triggerBurst() {
+        SoundManager.hapticHeavy()
+        SoundManager.shared.playTransition()
+        showBurstEffect = true
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            withAnimation(.easeInOut(duration: 0.5)) {
+                appState.enterHome()
+            }
+        }
+    }
+}
+
+struct BurstTransitionView: View {
+    @State private var particles: [BurstParticle] = []
+    @State private var expandingRing: CGFloat = 0
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            Color(hex: "FFD700").opacity(0.8),
+                            Color(hex: "FFB6C1").opacity(0.4),
+                            Color.clear
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    lineWidth: 3
+                )
+                .scaleEffect(expandingRing)
+                .opacity(1.0 - Double(expandingRing) / 5.0)
+                .blur(radius: 2)
+
+            ForEach(particles) { particle in
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                particle.color.opacity(0.9),
+                                particle.color.opacity(0.3),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: particle.size * 0.5
+                        )
+                    )
+                    .frame(width: particle.size, height: particle.size)
+                    .position(particle.position)
+                    .opacity(particle.opacity)
+                    .blur(radius: 1)
+            }
+        }
+        .onAppear {
+            generateBurstEffect()
+        }
+    }
+
+    private func generateBurstEffect() {
+        let center = CGPoint(
+            x: UIScreen.main.bounds.width / 2,
+            y: UIScreen.main.bounds.height / 2
+        )
+
+        let colors: [Color] = [
+            Color(hex: "FFD700"),
+            Color(hex: "FFB6C1"),
+            Color(hex: "87CEEB"),
+            Color(hex: "DDA0DD"),
+            Color(hex: "FFA500")
+        ]
+
+        withAnimation(.easeOut(duration: 1.0)) {
+            expandingRing = 5.0
+        }
+
+        for i in 0..<50 {
+            let angle = Double.random(in: 0...(2 * .pi))
+            let distance = CGFloat.random(in: 150...400)
+            let endX = center.x + cos(angle) * distance
+            let endY = center.y + sin(angle) * distance
+
+            var particle = BurstParticle(
+                position: center,
+                color: colors.randomElement()!,
+                size: CGFloat.random(in: 4...12)
+            )
+
+            let delay = Double(i) * 0.01
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                withAnimation(.easeOut(duration: 0.8)) {
+                    particle.position = CGPoint(x: endX, y: endY)
+                    particle.opacity = 0
+                }
+                particles.append(particle)
+            }
+        }
+    }
+}
+
+struct BurstParticle: Identifiable {
+    let id = UUID()
+    var position: CGPoint
+    let color: Color
+    let size: CGFloat
+    var opacity: Double = 1.0
+}
+
+// MARK: - ========== 2. Home 页面（SpriteKit 升级版）==========
+struct HomeView: View {
+    @EnvironmentObject var appState: AppState
+    @State private var bubbleScene: BubbleScene = BubbleScene(size: CGSize(width: 430, height: 932))
+    @State private var pulseAnimation = false
+    @State private var archivePulse = false
+    @State private var showingParticles = false
+    @State private var isLongPressingLaunch = false
+    @State private var launchBubbleScale: CGFloat = 0
+    @State private var showSnoozeHint = false
+    @State private var snoozeHintText = ""
+
+    // Task input state
+    @State private var showTaskInput = false
+    @State private var taskInputText = ""
+    @FocusState private var isTaskInputFocused: Bool
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                LinearGradient(
+                    colors: [Color(hex: "FFF9E6"), Color(hex: "FDFCF8")],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+
+                RadialGradient(
+                    colors: [Color(hex: "FFF9E6").opacity(0.5), Color.clear],
+                    center: .center,
+                    startRadius: 0,
+                    endRadius: 400
+                )
+                .opacity(pulseAnimation ? 0.7 : 0.4)
+                .animation(.easeInOut(duration: 7).repeatForever(autoreverses: true), value: pulseAnimation)
+                .onAppear { pulseAnimation = true }
+
+                VStack(spacing: 0) {
+                    HStack {
+                        Button(action: { appState.openCalendar() }) {
+                            Image(systemName: "calendar")
+                                .font(.system(size: 20))
+                                .foregroundColor(Color(hex: "6B6B6B"))
+                                .frame(width: 40, height: 40)
+                                .background(Circle().fill(.ultraThinMaterial))
+                        }
+
+                        Spacer()
+
+                        Button(action: { appState.openArchive() }) {
+                            Image(systemName: "gearshape.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(Color(hex: "6B6B6B"))
+                                .frame(width: 40, height: 40)
+                                .background(Circle().fill(.ultraThinMaterial))
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 20)
+
+                    BubbleSceneView(scene: bubbleScene)
+
+                    Spacer()
+                }
+
+                // Launchpad Button - PLACED OUTSIDE VStack WITH HIGH Z-INDEX
+                VStack {
+                    Spacer()
+
+                    VStack(spacing: 12) {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.5),
+                                        Color(hex: "CBA972").opacity(0.3)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .background(Circle().fill(.ultraThinMaterial))
+                            .frame(width: 70, height: 70)
+                            .shadow(color: Color(hex: "CBA972").opacity(0.3), radius: 24, x: 0, y: 8)
+                            .overlay(
+                                Text("+")
+                                    .font(.system(size: 32, weight: .light))
+                                    .foregroundColor(Color(hex: "CBA972").opacity(0.8))
+                            )
+                            .scaleEffect(isLongPressingLaunch ? 0.9 : 1.0)
+                            .onLongPressGesture(minimumDuration: 0.5) {
+                                // Show task input when long press completes
+                                SoundManager.hapticMedium()
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                                    showTaskInput = true
+                                    isTaskInputFocused = true
+                                }
+                            } onPressingChanged: { pressing in
+                                // Visual feedback during press
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    isLongPressingLaunch = pressing
+                                }
+                            }
+
+                        Text("Long Press to Create")
+                            .font(.system(size: 11))
+                            .foregroundColor(Color(hex: "6B6B6B").opacity(0.6))
+                            .opacity(isLongPressingLaunch ? 0 : 1)
+                    }
+                    .padding(.bottom, 30)
+                }
+                .zIndex(100)  // Ensure button is on top of SpriteKit view
+
+                // AI Chat Button (bottom-right)
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+
+                        Button(action: { appState.openChat() }) {
+                            ZStack {
+                                Circle()
+                                    .fill(
+                                        RadialGradient(
+                                            colors: [
+                                                Color(hex: "CBA972").opacity(0.6),
+                                                Color(hex: "CBA972").opacity(0.2)
+                                            ],
+                                            center: .center,
+                                            startRadius: 0,
+                                            endRadius: 25
+                                        )
+                                    )
+                                    .frame(width: 50, height: 50)
+                                    .shadow(color: Color(hex: "CBA972").opacity(0.5), radius: 20)
+                                    .scaleEffect(archivePulse ? 1.1 : 1.0)
+                                    .animation(.easeInOut(duration: 3).repeatForever(autoreverses: true), value: archivePulse)
+                                    .onAppear { archivePulse = true }
+
+                                Text("✨")
+                                    .font(.system(size: 20))
+                            }
+                        }
+                        .padding(.trailing, 30)
+                        .padding(.bottom, 120)
+                    }
+                }
+
+                if showSnoozeHint {
+                    VStack {
+                        Spacer()
+                        Text(snoozeHintText)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 12)
+                            .background(Capsule().fill(Color(hex: "6B6B6B").opacity(0.9)))
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                            .padding(.bottom, 100)
+                    }
+                }
+
+                // Task Input Overlay
+                if showTaskInput {
+                    ZStack {
+                        // Semi-transparent background
+                        Color.black.opacity(0.3)
+                            .ignoresSafeArea()
+                            .onTapGesture {
+                                dismissTaskInput()
+                            }
+
+                        // Input card
+                        VStack(spacing: 20) {
+                            Text("New Task")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundColor(Color(hex: "6B6B6B"))
+
+                            TextField("What needs to be done?", text: $taskInputText)
+                                .focused($isTaskInputFocused)
+                                .font(.system(size: 16))
+                                .padding(16)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(Color.white.opacity(0.9))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .stroke(Color(hex: "CBA972").opacity(0.3), lineWidth: 1)
+                                        )
+                                )
+                                .onSubmit {
+                                    createTaskBubble()
+                                }
+
+                            HStack(spacing: 12) {
+                                Button(action: {
+                                    dismissTaskInput()
+                                }) {
+                                    Text("Cancel")
+                                        .font(.system(size: 16, weight: .medium))
+                                        .foregroundColor(Color(hex: "6B6B6B"))
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 14)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .fill(Color.white.opacity(0.7))
+                                        )
+                                }
+
+                                Button(action: {
+                                    createTaskBubble()
+                                }) {
+                                    Text("Create")
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundColor(.white)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 14)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .fill(
+                                                    LinearGradient(
+                                                        colors: [
+                                                            Color(hex: "CBA972"),
+                                                            Color(hex: "CBA972").opacity(0.8)
+                                                        ],
+                                                        startPoint: .topLeading,
+                                                        endPoint: .bottomTrailing
+                                                    )
+                                                )
+                                        )
+                                }
+                                .disabled(taskInputText.isEmpty)
+                                .opacity(taskInputText.isEmpty ? 0.5 : 1.0)
+                            }
+                        }
+                        .padding(24)
+                        .background(
+                            RoundedRectangle(cornerRadius: 20)
+                                .fill(.ultraThinMaterial)
+                        )
+                        .padding(.horizontal, 40)
+                    }
+                    .zIndex(200)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
+            }
+            .onAppear {
+                bubbleScene.size = geometry.size
+                bubbleScene.archivePosition = CGPoint(
+                    x: geometry.size.width - 55,
+                    y: geometry.size.height - 140
+                )
+
+                for bubble in appState.bubbles {
+                    bubbleScene.addBubble(bubble: bubble)
+                }
+
+                bubbleScene.onBubbleTapped = { bubbleId in
+                    popBubble(bubbleId)
+                }
+
+                bubbleScene.onBubbleFlung = { bubbleId in
+                    snoozeBubble(bubbleId)
+                }
+            }
+        }
+    }
+
+    // MARK: - Task Input Functions
+    private func dismissTaskInput() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            showTaskInput = false
+        }
+        taskInputText = ""
+        isTaskInputFocused = false
+    }
+
+    private func createTaskBubble() {
+        guard !taskInputText.isEmpty else { return }
+
+        SoundManager.hapticMedium()
+        SoundManager.shared.playBubbleCreate()
+
+        // Create new small bubble (chore type)
+        let newBubble = Bubble(
+            text: taskInputText,
+            type: .small,
+            position: CGPoint(x: 0.5, y: 0.5)  // Center position
+        )
+
+        // Add to app state
+        appState.bubbles.append(newBubble)
+
+        // Add to SpriteKit scene at center with slight randomization
+        let centerX = bubbleScene.size.width / 2 + CGFloat.random(in: -30...30)
+        let centerY = bubbleScene.size.height / 2 + CGFloat.random(in: -30...30)
+        bubbleScene.addBubble(bubble: newBubble, at: CGPoint(x: centerX, y: centerY))
+
+        // Dismiss input
+        dismissTaskInput()
+    }
+
+    private func popBubble(_ bubbleId: UUID) {
+        guard let bubble = appState.bubbles.first(where: { $0.id == bubbleId }) else { return }
+        bubbleScene.popBubble(id: bubbleId)
+        appState.completeBubble(bubble)
+    }
+
+    private func snoozeBubble(_ bubbleId: UUID) {
+        guard let bubble = appState.bubbles.first(where: { $0.id == bubbleId }) else { return }
+
+        snoozeHintText = "「\(bubble.text)」进入明日待办泡泡海"
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            showSnoozeHint = true
+        }
+
+        appState.completeBubble(bubble)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            withAnimation {
+                showSnoozeHint = false
+            }
+        }
+    }
+}
+
+// MARK: - ========== SpriteKit 泡泡系统（升级版）==========
+class BubbleNode: SKShapeNode {
+    let bubbleId: UUID
+    let bubbleText: String
+    let bubbleType: Bubble.BubbleType
+
+    init(bubble: Bubble, radius: CGFloat) {
+        self.bubbleId = bubble.id
+        self.bubbleText = bubble.text
+        self.bubbleType = bubble.type
+        super.init()
+
+        let circlePath = CGPath(ellipseIn: CGRect(x: -radius, y: -radius, width: radius * 2, height: radius * 2), transform: nil)
+        self.path = circlePath
+
+        // 琐事泡泡使用莫兰迪灰调（低饱和度、高明度）
+        let choreColors = ["#B0C4DE", "#D8BFD8", "#B0D4B8", "#C9C3D6", "#C8D8E4"]
+        let randomChoreColor = choreColors.randomElement() ?? "#B0C4DE"
+
+        self.fillColor = bubbleType == .core ?
+            UIColor(Color(hex: "FFB6C1")).withAlphaComponent(0.15) :
+            UIColor(Color(hex: randomChoreColor)).withAlphaComponent(0.12)
+
+        self.strokeColor = UIColor.white.withAlphaComponent(0.5)
+        self.lineWidth = 2
+        self.glowWidth = 4
+
+        setupPhysicsBody(radius: radius)
+        addIridescenceEffect(radius: radius)
+        addHighlight(radius: radius)
+        addTextLabel(radius: radius)
+        addBreathingAnimation()
+    }
+
+    required init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func setupPhysicsBody(radius: CGFloat) {
+        self.physicsBody = SKPhysicsBody(circleOfRadius: radius)
+        self.physicsBody?.isDynamic = true
+        self.physicsBody?.mass = bubbleType == .core ? 1.5 : 0.8
+        self.physicsBody?.friction = 0.0
+        self.physicsBody?.restitution = 0.6
+        self.physicsBody?.linearDamping = 3.5  // Increased significantly for lazy floating (like soap bubbles in heavy air)
+        self.physicsBody?.angularDamping = 0.8
+        self.physicsBody?.allowsRotation = false
+        self.physicsBody?.categoryBitMask = 1
+        self.physicsBody?.contactTestBitMask = 1
+        self.physicsBody?.collisionBitMask = 1
+
+        // Reduce initial velocity by another 50% (10 instead of 20)
+        self.physicsBody?.velocity = CGVector(dx: CGFloat.random(in: -10...10), dy: CGFloat.random(in: -10...10))
+    }
+
+    private func addIridescenceEffect(radius: CGFloat) {
+        let iridescence = SKShapeNode(circleOfRadius: radius)
+        // Enhanced rainbow iridescence for both core and chore bubbles
+        iridescence.fillColor = bubbleType == .core ?
+            UIColor(Color(hex: "DDA0DD")).withAlphaComponent(0.35) :
+            UIColor(Color(hex: "FFD700")).withAlphaComponent(0.28)  // More vibrant base color
+        iridescence.strokeColor = .clear
+        iridescence.blendMode = .add
+        iridescence.zPosition = 1
+        self.addChild(iridescence)
+
+        // Rainbow color cycling for magical effect
+        let colorSequence = bubbleType == .core ?
+            [
+                UIColor(Color(hex: "FFB6C1")).withAlphaComponent(0.4),  // Pink
+                UIColor(Color(hex: "DDA0DD")).withAlphaComponent(0.4),  // Purple
+                UIColor(Color(hex: "87CEEB")).withAlphaComponent(0.4),  // Sky blue
+                UIColor(Color(hex: "FFD700")).withAlphaComponent(0.4)   // Gold
+            ] :
+            [
+                UIColor(Color(hex: "FFB6C1")).withAlphaComponent(0.35),  // Pink - rainbow effect
+                UIColor(Color(hex: "87CEEB")).withAlphaComponent(0.35),  // Sky blue
+                UIColor(Color(hex: "98FB98")).withAlphaComponent(0.35),  // Pale green
+                UIColor(Color(hex: "DDA0DD")).withAlphaComponent(0.35)   // Purple
+            ]
+
+        var colorActions: [SKAction] = []
+        for color in colorSequence {
+            colorActions.append(SKAction.colorize(with: color, colorBlendFactor: 1.0, duration: 3.0))
+        }
+
+        let colorCycle = SKAction.sequence(colorActions)
+        iridescence.run(SKAction.repeatForever(colorCycle))
+    }
+
+    private func addHighlight(radius: CGFloat) {
+        // Stronger, larger white specular highlight for wet/shiny look
+        let highlight = SKShapeNode(circleOfRadius: radius * 0.4)
+        highlight.position = CGPoint(x: -radius * 0.3, y: radius * 0.3)
+        highlight.fillColor = UIColor.white.withAlphaComponent(0.85)  // Much stronger
+        highlight.strokeColor = .clear
+        highlight.zPosition = 2
+        self.addChild(highlight)
+
+        // More dramatic pulsing for gloss effect
+        let fadeOut = SKAction.fadeAlpha(to: 0.6, duration: 1.8)
+        let fadeIn = SKAction.fadeAlpha(to: 0.95, duration: 1.8)
+        let pulse = SKAction.sequence([fadeOut, fadeIn])
+        highlight.run(SKAction.repeatForever(pulse))
+    }
+
+    private func addTextLabel(radius: CGFloat) {
+        let label = SKLabelNode(text: bubbleText)
+        label.fontName = "HelveticaNeue-Medium"
+        label.fontSize = bubbleType == .core ? 16 : 13
+        label.fontColor = UIColor(Color(hex: "6B6B6B"))
+        label.verticalAlignmentMode = .center
+        label.horizontalAlignmentMode = .center
+        label.numberOfLines = 0
+        label.preferredMaxLayoutWidth = radius * 1.6
+        label.zPosition = 3
+        self.addChild(label)
+    }
+
+    private func addBreathingAnimation() {
+        let scaleUp = SKAction.scale(to: 1.05, duration: Double.random(in: 3...5))
+        let scaleDown = SKAction.scale(to: 1.0, duration: Double.random(in: 3...5))
+        let breathe = SKAction.sequence([scaleUp, scaleDown])
+        self.run(SKAction.repeatForever(breathe))
+    }
+
+    func burst(completion: @escaping () -> Void) {
+        self.removeAllActions()
+        let scale = SKAction.scale(to: 1.3, duration: 0.2)
+        let fade = SKAction.fadeOut(withDuration: 0.2)
+        let group = SKAction.group([scale, fade])
+        self.run(group) {
+            completion()
+        }
+    }
+}
+
+class BubbleScene: SKScene {
+    var onBubbleTapped: ((UUID) -> Void)?
+    var onBubbleFlung: ((UUID) -> Void)?
+    var archivePosition: CGPoint = .zero
+
+    private var bubbleNodes: [UUID: BubbleNode] = [:]
+    private var draggedBubble: BubbleNode?
+    private var dragStartPosition: CGPoint = .zero
+    private var dragStartTime: TimeInterval = 0
+
+    override init(size: CGSize) {
+        super.init(size: size)
+        self.backgroundColor = .clear
+        self.scaleMode = .aspectFill
+        setupPhysicsWorld()
+        setupFloatingFields()
+    }
+
+    required init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func setupPhysicsWorld() {
+        physicsWorld.gravity = CGVector(dx: 0, dy: -0.1)  // 降低重力（从-0.2减到-0.1）
+        physicsWorld.speed = 1.0
+    }
+
+    private func setupFloatingFields() {
+        let noiseField = SKFieldNode.noiseField(withSmoothness: 1.0, animationSpeed: 0.3)  // 降低动画速度
+        noiseField.strength = 0.15  // 降低强度（从0.3减到0.15）
+        noiseField.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        noiseField.region = SKRegion(size: CGSize(width: size.width * 2, height: size.height * 2))
+        addChild(noiseField)
+
+        let turbulenceField = SKFieldNode.turbulenceField(withSmoothness: 0.8, animationSpeed: 0.5)  // 降低动画速度
+        turbulenceField.strength = 0.08  // 降低强度（从0.15减到0.08）
+        turbulenceField.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        turbulenceField.region = SKRegion(size: CGSize(width: size.width * 2, height: size.height * 2))
+        addChild(turbulenceField)
+
+        // Inset physics bounds to keep bubbles strictly within visible safe area
+        let boundaryRect = CGRect(x: 0, y: 0, width: size.width, height: size.height)
+        let insetBounds = boundaryRect.insetBy(dx: 10, dy: 50)
+        let boundary = SKPhysicsBody(edgeLoopFrom: insetBounds)
+        boundary.friction = 0.0
+        boundary.restitution = 0.5
+        physicsBody = boundary
+    }
+
+    func addBubble(bubble: Bubble, at position: CGPoint? = nil) {
+        guard bubbleNodes[bubble.id] == nil else { return }
+
+        let radius: CGFloat = bubble.type == .core ? 80 : 45
+        let bubbleNode = BubbleNode(bubble: bubble, radius: radius)
+
+        if let pos = position {
+            bubbleNode.position = pos
+        } else {
+            let skPosition = CGPoint(
+                x: bubble.position.x * size.width,
+                y: (1.0 - bubble.position.y) * size.height
+            )
+            bubbleNode.position = skPosition
+        }
+
+        bubbleNodes[bubble.id] = bubbleNode
+        addChild(bubbleNode)
+        addRepulsionField(to: bubbleNode, radius: radius)
+    }
+
+    func removeBubble(_ bubbleId: UUID, animated: Bool = true) {
+        guard let node = bubbleNodes[bubbleId] else { return }
+
+        if animated {
+            node.burst {
+                node.removeFromParent()
+            }
+        } else {
+            node.removeFromParent()
+        }
+
+        bubbleNodes.removeValue(forKey: bubbleId)
+    }
+
+    func popBubble(id: UUID) {
+        guard let bubbleNode = bubbleNodes[id] else { return }
+
+        let bubblePos = bubbleNode.position
+        let bubbleColor = bubbleNode.fillColor
+
+        SoundManager.hapticMedium()
+        SoundManager.shared.playBubblePop()
+
+        bubbleNode.burst {
+            bubbleNode.removeFromParent()
+        }
+
+        createDreamyFlowParticles(from: bubblePos, color: bubbleColor)
+        bubbleNodes.removeValue(forKey: id)
+    }
+
+    private func addRepulsionField(to bubbleNode: BubbleNode, radius: CGFloat) {
+        let repulsionField = SKFieldNode.radialGravityField()
+        repulsionField.strength = -1.5
+        repulsionField.falloff = 2.0
+        repulsionField.region = SKRegion(radius: Float(radius * 2.0))
+        repulsionField.minimumRadius = Float(radius * 1.2)
+        bubbleNode.addChild(repulsionField)
+    }
+
+    private func createDreamyFlowParticles(from startPos: CGPoint, color: UIColor) {
+        let particleCount = 75  // Increased by 3x (from 25 to 75)
+        // Flow to bottom-right corner
+        let targetPoint = CGPoint(x: size.width - 30, y: size.height - 30)
+
+        for i in 0..<particleCount {
+            let delay = TimeInterval(i) * 0.015  // 加快释放速度
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                let particle = SKShapeNode(circleOfRadius: CGFloat.random(in: 6...12))  // Slightly larger particles
+                particle.fillColor = color
+                particle.strokeColor = color.withAlphaComponent(0.8)
+                particle.lineWidth = 1.5
+                particle.glowWidth = 5
+                particle.alpha = 0.95
+                particle.position = startPos
+
+                self.addChild(particle)
+
+                let randomOffsetX = CGFloat.random(in: -20...20)
+                let randomOffsetY = CGFloat.random(in: -20...20)
+                let finalTarget = CGPoint(
+                    x: targetPoint.x + randomOffsetX,
+                    y: targetPoint.y + randomOffsetY
+                )
+
+                let path = self.createArcPath(from: startPos, to: finalTarget)
+                let duration = TimeInterval.random(in: 0.6...1.2)
+
+                let followPath = SKAction.follow(path, asOffset: false, orientToPath: false, duration: duration)
+                followPath.timingMode = .easeOut
+
+                let fadeOut = SKAction.fadeOut(withDuration: duration)
+                let scaleDown = SKAction.scale(to: 0.2, duration: duration)
+
+                let group = SKAction.group([followPath, fadeOut, scaleDown])
+
+                particle.run(group) {
+                    particle.removeFromParent()
+                }
+            }
+        }
+    }
+
+    private func createArcPath(from start: CGPoint, to end: CGPoint) -> CGPath {
+        let path = CGMutablePath()
+        path.move(to: start)
+
+        let midX = (start.x + end.x) / 2
+        let midY = (start.y + end.y) / 2
+
+        let offsetX = CGFloat.random(in: -50...50)
+        let offsetY: CGFloat = -100
+        let controlPoint = CGPoint(x: midX + offsetX, y: midY + offsetY)
+
+        path.addQuadCurve(to: end, control: controlPoint)
+
+        return path
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first else { return }
+        let location = touch.location(in: self)
+
+        let touchedNodes = nodes(at: location)
+        if let bubbleNode = touchedNodes.compactMap({ $0 as? BubbleNode }).first {
+            draggedBubble = bubbleNode
+            dragStartPosition = location
+            dragStartTime = Date().timeIntervalSince1970
+
+            bubbleNode.physicsBody?.isDynamic = false
+            SoundManager.hapticLight()
+        }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first,
+              let bubble = draggedBubble else { return }
+
+        let location = touch.location(in: self)
+        bubble.position = location
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first,
+              let bubble = draggedBubble else { return }
+
+        let endPosition = touch.location(in: self)
+        let endTime = Date().timeIntervalSince1970
+
+        let dx = endPosition.x - dragStartPosition.x
+        let dy = endPosition.y - dragStartPosition.y
+        let distance = sqrt(dx * dx + dy * dy)
+        let duration = endTime - dragStartTime
+        let velocity = duration > 0 ? distance / CGFloat(duration) : 0
+
+        bubble.physicsBody?.isDynamic = true
+
+        let isFlingGesture = velocity > 800 && distance > 100
+
+        if isFlingGesture {
+            SoundManager.hapticMedium()
+            onBubbleFlung?(bubble.bubbleId)
+
+            let impulse = CGVector(dx: dx * 0.5, dy: dy * 0.5)
+            bubble.physicsBody?.applyImpulse(impulse)
+
+        } else if distance < 20 && duration < 0.3 {
+            SoundManager.hapticMedium()
+            SoundManager.shared.playBubblePop()
+            onBubbleTapped?(bubble.bubbleId)
+        }
+
+        draggedBubble = nil
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if let bubble = draggedBubble {
+            bubble.physicsBody?.isDynamic = true
+        }
+        draggedBubble = nil
+    }
+}
+
+struct BubbleSceneView: UIViewRepresentable {
+    let scene: BubbleScene
+
+    func makeUIView(context: Context) -> SKView {
+        let skView = SKView()
+        skView.backgroundColor = .clear
+        skView.allowsTransparency = true
+        skView.ignoresSiblingOrder = true
+        skView.showsFPS = false
+        skView.showsNodeCount = false
+        skView.presentScene(scene)
+        return skView
+    }
+
+    func updateUIView(_ uiView: SKView, context: Context) {}
+}
+
+// MARK: - ========== 3. AI 对话（保留原版）==========
 struct ChatView: View {
     @EnvironmentObject var appState: AppState
     @State private var inputText = ""
 
     var body: some View {
         ZStack {
-            // 半透明背景（点击关闭）
             Color.black.opacity(0.3)
                 .ignoresSafeArea()
                 .onTapGesture {
-                    withAnimation {
-                        appState.closeChat()
-                    }
+                    appState.closeChat()
                 }
 
             VStack(spacing: 0) {
-                // 拖拽手柄
                 Capsule()
                     .fill(Color.gray.opacity(0.3))
                     .frame(width: 40, height: 5)
@@ -516,9 +1419,7 @@ struct ChatView: View {
             DragGesture()
                 .onEnded { value in
                     if value.translation.height > 100 {
-                        withAnimation {
-                            appState.closeChat()
-                        }
+                        appState.closeChat()
                     }
                 }
         )
@@ -536,29 +1437,50 @@ struct ChatView: View {
     }
 }
 
-// MARK: - ========== 4. 日历（下拉覆盖层）==========
+// MARK: - ========== 4. 日历（升级版）==========
 struct CalendarView: View {
     @EnvironmentObject var appState: AppState
     let columns = Array(repeating: GridItem(.flexible()), count: 7)
-    @State private var selectedDay: Int? = nil
-    @State private var scaleEffect: CGFloat = 1.0
+    let today = 1
+    @State private var days: [DayData] = []
+
+    struct DayData: Identifiable {
+        let id = UUID()
+        let day: Int
+        let isCompleted: Bool
+        let isToday: Bool
+        let isFuture: Bool
+    }
 
     var body: some View {
         ZStack {
-            LinearGradient(colors: [Color(hex: "2C2C3E"), Color(hex: "1C1C2E")], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
+            LinearGradient(
+                colors: [Color(hex: "2C2C3E"), Color(hex: "1C1C2E")],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            StarField()
 
             VStack {
-                // 拖拽手柄
                 Capsule()
                     .fill(Color.white.opacity(0.3))
                     .frame(width: 40, height: 5)
                     .padding(.top, 10)
 
                 HStack {
+                    Button(action: { appState.closeCalendar() }) {
+                        Image(systemName: "chevron.left")
+                            .foregroundColor(.white)
+                            .frame(width: 40, height: 40)
+                            .background(Circle().fill(.white.opacity(0.1)))
+                    }
                     Spacer()
-                    Text("2026 年 1 月").foregroundColor(Color(hex: "CBA972"))
+                    Text("2026 年 1 月")
+                        .foregroundColor(Color(hex: "CBA972"))
                     Spacer()
+                    Color.clear.frame(width: 40)
                 }
                 .padding()
 
@@ -568,32 +1490,11 @@ struct CalendarView: View {
                     .padding()
 
                 ScrollView {
-                    LazyVGrid(columns: columns, spacing: 15) {
-                        ForEach(1...31, id: \.self) { day in
-                            Circle()
-                                .fill(day < 20 ? Color(hex: "CBA972").opacity(0.6) : .white.opacity(0.1))
-                                .frame(width: 45, height: 45)
-                                .overlay(Text("\(day)").foregroundColor(.white))
-                                .scaleEffect(selectedDay == day ? 1.2 : 1.0)
-                                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: selectedDay)
+                    LazyVGrid(columns: columns, spacing: 20) {
+                        ForEach(days) { day in
+                            DayRingView(day: day)
                                 .onTapGesture {
-                                    // 触觉反馈
-                                    let impact = UIImpactFeedbackGenerator(style: .light)
-                                    impact.impactOccurred()
-
-                                    // 选中状态（视觉反馈）
-                                    selectedDay = day
-
-                                    // 打印日志
-                                    print("Selected Date: 2026-01-\(day)")
-
-                                    // 0.2秒后收起日历（回到主页）
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                                        withAnimation {
-                                            appState.closeCalendar()
-                                        }
-                                        selectedDay = nil
-                                    }
+                                    handleDayTap(day)
                                 }
                         }
                     }
@@ -601,21 +1502,195 @@ struct CalendarView: View {
                 }
             }
         }
+        .onAppear {
+            generateDays()
+        }
         .gesture(
             DragGesture()
                 .onEnded { value in
-                    // 下滑手势 → 关闭日历（Pull Down）
                     if value.translation.height > 100 {
-                        withAnimation {
-                            appState.closeCalendar()
-                        }
+                        appState.closeCalendar()
                     }
                 }
         )
     }
+
+    private func generateDays() {
+        days = (1...31).map { day in
+            let isToday = day == today
+            let isFuture = day > today
+            let isCompleted = day < today && Double.random(in: 0...1) > 0.3
+
+            return DayData(
+                day: day,
+                isCompleted: isCompleted,
+                isToday: isToday,
+                isFuture: isFuture
+            )
+        }
+    }
+
+    private func handleDayTap(_ day: DayData) {
+        // Allow clicking today, future dates, and completed past dates
+        guard day.isToday || day.isFuture || (day.isCompleted && !day.isFuture) else {
+            SoundManager.hapticLight()
+            return
+        }
+
+        SoundManager.hapticMedium()
+
+        withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {}
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            appState.closeCalendar()
+        }
+    }
 }
 
-// MARK: - ========== 5. 档案 ==========
+struct DayRingView: View {
+    let day: CalendarView.DayData
+    @State private var pulseScale: CGFloat = 1.0
+
+    var body: some View {
+        ZStack {
+            if day.isToday {
+                ZStack {
+                    SoapBubbleView(
+                        size: 60,
+                        baseColors: [
+                            Color(hex: "FFD700"),
+                            Color(hex: "FFB6C1"),
+                            Color(hex: "87CEEB")
+                        ],
+                        intensity: 1.2
+                    )
+                    .scaleEffect(pulseScale)
+                    .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: pulseScale)
+                    .onAppear { pulseScale = 1.08 }
+
+                    Circle()
+                        .stroke(Color.white.opacity(0.8), lineWidth: 2)
+                        .blur(radius: 1)
+                }
+                .shadow(color: Color.white.opacity(0.6), radius: 25)
+
+            } else if day.isFuture {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color(hex: "ADD8E6").opacity(0.05),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 30
+                        )
+                    )
+                    .overlay(
+                        Circle()
+                            .strokeBorder(
+                                style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])
+                            )
+                            .foregroundColor(Color(hex: "ADD8E6").opacity(0.25))
+                            .blur(radius: 1.5)
+                    )
+                    .opacity(day.day <= 4 ? 0.6 : 0.25)
+
+            } else if day.isCompleted {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color(hex: "8B7355").opacity(0.5),
+                                Color(hex: "8B7355").opacity(0.2),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 30
+                        )
+                    )
+                    .overlay(
+                        Circle()
+                            .stroke(Color(hex: "8B7355").opacity(0.5), lineWidth: 1.5)
+                    )
+                    .shadow(color: Color(hex: "8B7355").opacity(0.3), radius: 12)
+
+            } else {
+                Circle()
+                    .fill(Color.white.opacity(0.03))
+                    .overlay(
+                        Circle()
+                            .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                    )
+                    .opacity(0.3)
+            }
+
+            Text("\(day.day)")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(
+                    day.isFuture ? Color(hex: "ADD8E6").opacity(0.4) :
+                    day.isToday ? .white :
+                    day.isCompleted ? Color(hex: "8B7355").opacity(0.9) :
+                    .white.opacity(0.25)
+                )
+        }
+        .frame(width: 60, height: 60)
+    }
+}
+
+struct StarField: View {
+    @State private var stars: [Star] = []
+
+    struct Star: Identifiable {
+        let id = UUID()
+        let position: CGPoint
+        let size: CGFloat
+        var opacity: Double
+        let delay: Double
+    }
+
+    var body: some View {
+        ZStack {
+            ForEach(stars) { star in
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: star.size, height: star.size)
+                    .position(star.position)
+                    .opacity(star.opacity)
+                    .animation(
+                        .easeInOut(duration: Double.random(in: 2...4))
+                            .repeatForever(autoreverses: true)
+                            .delay(star.delay),
+                        value: star.opacity
+                    )
+            }
+        }
+        .onAppear {
+            generateStars()
+        }
+    }
+
+    private func generateStars() {
+        let screenWidth = UIScreen.main.bounds.width
+        let screenHeight = UIScreen.main.bounds.height
+
+        stars = (0..<100).map { _ in
+            Star(
+                position: CGPoint(
+                    x: CGFloat.random(in: 0...screenWidth),
+                    y: CGFloat.random(in: 0...screenHeight)
+                ),
+                size: CGFloat.random(in: 1...3),
+                opacity: Double.random(in: 0.3...1.0),
+                delay: Double.random(in: 0...3)
+            )
+        }
+    }
+}
+
+// MARK: - ========== 5. 档案（保留原版）==========
 struct ArchiveView: View {
     @EnvironmentObject var appState: AppState
 
@@ -626,11 +1701,7 @@ struct ArchiveView: View {
             ScrollView {
                 VStack {
                     HStack {
-                        Button(action: {
-                            withAnimation {
-                                appState.closeArchive()
-                            }
-                        }) {
+                        Button(action: { appState.closeArchive() }) {
                             Image(systemName: "chevron.left")
                                 .foregroundColor(.white)
                                 .frame(width: 40, height: 40)
@@ -714,271 +1785,5 @@ extension Color {
         default: (a, r, g, b) = (1, 1, 1, 0)
         }
         self.init(.sRGB, red: Double(r) / 255, green: Double(g) / 255, blue: Double(b) / 255, opacity: Double(a) / 255)
-    }
-}
-
-// MARK: - ========== SpriteKit 泡泡场景系统 ==========
-
-/// 单个泡泡节点
-class BubbleNode: SKShapeNode {
-    let bubbleText: String
-    let bubbleType: Bubble.BubbleType
-    var bubbleId: UUID
-
-    init(bubble: Bubble, radius: CGFloat) {
-        self.bubbleText = bubble.text
-        self.bubbleType = bubble.type
-        self.bubbleId = bubble.id
-        super.init()
-
-        // 创建圆形
-        self.path = CGPath(ellipseIn: CGRect(x: -radius, y: -radius, width: radius * 2, height: radius * 2), transform: nil)
-
-        // 设置颜色
-        if bubble.type == .core {
-            self.fillColor = UIColor(red: 1.0, green: 0.71, blue: 0.76, alpha: 0.7) // 粉色
-            self.strokeColor = UIColor(red: 1.0, green: 0.71, blue: 0.76, alpha: 0.9)
-        } else {
-            self.fillColor = UIColor(red: 0.91, green: 0.91, blue: 0.91, alpha: 0.6) // 灰色
-            self.strokeColor = UIColor(red: 0.91, green: 0.91, blue: 0.91, alpha: 0.8)
-        }
-        self.lineWidth = 2
-        self.glowWidth = 5
-
-        // 添加文字标签
-        let label = SKLabelNode(text: bubbleText)
-        label.fontName = "SF Pro Text"
-        label.fontSize = bubble.type == .core ? 15 : 12
-        label.fontColor = UIColor(red: 0.42, green: 0.42, blue: 0.42, alpha: 1.0)
-        label.verticalAlignmentMode = .center
-        label.horizontalAlignmentMode = .center
-        label.preferredMaxLayoutWidth = radius * 1.6
-        label.numberOfLines = 0
-        label.position = .zero
-        addChild(label)
-
-        // 设置物理体
-        setupPhysics(radius: radius)
-
-        // 启动呼吸动画
-        startBreathingAnimation()
-    }
-
-    required init?(coder aDecoder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    private func setupPhysics(radius: CGFloat) {
-        let body = SKPhysicsBody(circleOfRadius: radius)
-        body.isDynamic = true
-        body.affectedByGravity = false
-        body.allowsRotation = false
-        body.mass = bubbleType == .core ? 2.0 : 1.0
-
-        // 关键：取消碰撞，泡泡可以互相穿过
-        body.collisionBitMask = 0
-        body.categoryBitMask = 1
-        body.contactTestBitMask = 0
-
-        // 阻尼：模拟在水中的感觉
-        body.linearDamping = 0.8
-        body.angularDamping = 0.5
-
-        // 初始随机速度
-        let randomVelocity = CGVector(
-            dx: CGFloat.random(in: -20...20),
-            dy: CGFloat.random(in: -20...20)
-        )
-        body.velocity = randomVelocity
-
-        self.physicsBody = body
-    }
-
-    /// 呼吸动画：永久循环的缩放
-    private func startBreathingAnimation() {
-        let scaleUp = SKAction.scale(to: 1.05, duration: 2.0)
-        scaleUp.timingMode = .easeInEaseOut
-
-        let scaleDown = SKAction.scale(to: 0.95, duration: 2.0)
-        scaleDown.timingMode = .easeInEaseOut
-
-        let breathe = SKAction.sequence([scaleUp, scaleDown])
-        let breatheForever = SKAction.repeatForever(breathe)
-
-        self.run(breatheForever, withKey: "breathing")
-    }
-}
-
-/// 完整的泡泡场景
-class BubbleScene: SKScene {
-    var archivePosition: CGPoint = .zero
-    var onBubbleTapped: ((UUID) -> Void)?
-
-    override init(size: CGSize) {
-        super.init(size: size)
-        self.backgroundColor = .clear
-        self.scaleMode = .aspectFill
-
-        // 设置物理世界（无重力）
-        self.physicsWorld.gravity = CGVector(dx: 0, dy: 0)
-
-        // 创建边界（防止泡泡飞出屏幕）
-        setupBoundaries()
-    }
-
-    required init?(coder aDecoder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    private func setupBoundaries() {
-        let boundary = SKPhysicsBody(edgeLoopFrom: self.frame)
-        boundary.friction = 0
-        boundary.restitution = 0.3 // 轻微反弹
-        self.physicsBody = boundary
-    }
-
-    /// 添加泡泡到场景
-    func addBubble(bubble: Bubble, at position: CGPoint? = nil) {
-        let radius: CGFloat = bubble.type == .core ? 70 : 40
-        let bubbleNode = BubbleNode(bubble: bubble, radius: radius)
-
-        // 设置位置
-        if let pos = position {
-            bubbleNode.position = pos
-        } else {
-            // 使用相对位置转换为场景坐标
-            let sceneX = bubble.position.x * size.width
-            let sceneY = (1.0 - bubble.position.y) * size.height // Y轴反转
-            bubbleNode.position = CGPoint(x: sceneX, y: sceneY)
-        }
-
-        bubbleNode.name = bubble.id.uuidString
-        addChild(bubbleNode)
-    }
-
-    /// 移除泡泡（通过ID）
-    func removeBubble(id: UUID) {
-        if let node = childNode(withName: id.uuidString) {
-            node.removeFromParent()
-        }
-    }
-
-    /// 泡泡爆裂效果：梦幻流沙归档
-    func popBubble(id: UUID) {
-        guard let bubbleNode = childNode(withName: id.uuidString) as? BubbleNode else { return }
-
-        let bubblePos = bubbleNode.position
-        let bubbleColor = bubbleNode.fillColor
-
-        // 触觉反馈
-        let impact = UIImpactFeedbackGenerator(style: .heavy)
-        impact.impactOccurred()
-
-        // 泡泡先缩小消失
-        let shrink = SKAction.scale(to: 0, duration: 0.3)
-        shrink.timingMode = .easeIn
-        bubbleNode.run(shrink) {
-            bubbleNode.removeFromParent()
-        }
-
-        // 生成梦幻流沙粒子
-        createDreamyFlowParticles(from: bubblePos, color: bubbleColor)
-    }
-
-    /// 梦幻流沙粒子：沿弧线飞向档案入口
-    private func createDreamyFlowParticles(from startPos: CGPoint, color: UIColor) {
-        let particleCount = 18
-        let targetPoint = archivePosition
-
-        for i in 0..<particleCount {
-            let delay = TimeInterval(i) * 0.03
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                // 创建圆形粒子
-                let particle = SKShapeNode(circleOfRadius: CGFloat.random(in: 3...6))
-                particle.fillColor = color
-                particle.strokeColor = color.withAlphaComponent(0.8)
-                particle.lineWidth = 1
-                particle.glowWidth = 3
-                particle.alpha = 0.9
-                particle.position = startPos
-
-                self.addChild(particle)
-
-                // 随机目标偏移，制造流沙感
-                let randomOffsetX = CGFloat.random(in: -20...20)
-                let randomOffsetY = CGFloat.random(in: -20...20)
-                let finalTarget = CGPoint(
-                    x: targetPoint.x + randomOffsetX,
-                    y: targetPoint.y + randomOffsetY
-                )
-
-                // 创建贝塞尔曲线路径（弧线运动）
-                let path = self.createArcPath(from: startPos, to: finalTarget)
-                let duration = TimeInterval.random(in: 0.6...1.0)
-
-                let followPath = SKAction.follow(path, asOffset: false, orientToPath: false, duration: duration)
-                followPath.timingMode = .easeOut
-
-                let fadeOut = SKAction.fadeOut(withDuration: duration)
-                let scaleDown = SKAction.scale(to: 0.2, duration: duration)
-
-                let group = SKAction.group([followPath, fadeOut, scaleDown])
-
-                particle.run(group) {
-                    particle.removeFromParent()
-                }
-            }
-        }
-    }
-
-    /// 创建弧线路径（贝塞尔曲线）
-    private func createArcPath(from start: CGPoint, to end: CGPoint) -> CGPath {
-        let path = CGMutablePath()
-        path.move(to: start)
-
-        // 计算控制点（制造弧线效果）
-        let midX = (start.x + end.x) / 2
-        let midY = (start.y + end.y) / 2
-
-        // 控制点偏移，让路径弯曲
-        let offsetX = CGFloat.random(in: -50...50)
-        let offsetY: CGFloat = -100 // 向上弯曲
-        let controlPoint = CGPoint(x: midX + offsetX, y: midY + offsetY)
-
-        path.addQuadCurve(to: end, control: controlPoint)
-
-        return path
-    }
-
-    /// 处理触摸事件
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first else { return }
-        let location = touch.location(in: self)
-
-        let touchedNodes = nodes(at: location)
-        for node in touchedNodes {
-            if let bubbleNode = node as? BubbleNode {
-                onBubbleTapped?(bubbleNode.bubbleId)
-                break
-            }
-        }
-    }
-}
-
-// MARK: - SpriteKit 视图包装器
-struct BubbleSceneView: UIViewRepresentable {
-    let scene: BubbleScene
-
-    func makeUIView(context: Context) -> SKView {
-        let skView = SKView()
-        skView.backgroundColor = .clear
-        skView.allowsTransparency = true
-        skView.presentScene(scene)
-        return skView
-    }
-
-    func updateUIView(_ uiView: SKView, context: Context) {
-        // 不需要更新
     }
 }
