@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LifeBubble - 生命星图</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'PingFang SC', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(180deg, #2C2C3E 0%, #1C1C2E 100%);
+            min-height: 100vh;
+            overflow-x: hidden;
+            position: relative;
+            color: white;
+        }
+
+        /* 星空背景 */
+        .stars {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        .star {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            background: white;
+            border-radius: 50%;
+            animation: twinkle 3s ease-in-out infinite;
+        }
+
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+
+        /* 顶部导航 */
+        .top-bar {
+            padding: 50px 20px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+            z-index: 100;
+        }
+
+        .back-button {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 20px;
+            color: white;
+            transition: all 0.3s;
+        }
+
+        .back-button:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateX(-5px);
+        }
+
+        .month-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: rgba(203, 169, 114, 0.9);
+            text-shadow: 0 0 20px rgba(203, 169, 114, 0.5);
+        }
+
+        .placeholder {
+            width: 40px;
+        }
+
+        /* 日历容器 */
+        .calendar-container {
+            padding: 40px 20px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+            position: relative;
+            z-index: 10;
+        }
+
+        /* 日期圆环 */
+        .day-ring {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            position: relative;
+            cursor: pointer;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .day-ring:hover {
+            transform: scale(1.2);
+            z-index: 10;
+        }
+
+        /* 过去 - 已完成 */
+        .day-ring.past.completed {
+            background: radial-gradient(circle,
+                rgba(203, 169, 114, 0.8) 0%,
+                rgba(203, 169, 114, 0.4) 70%,
+                transparent 100%);
+            box-shadow:
+                0 0 20px rgba(203, 169, 114, 0.6),
+                inset 0 0 15px rgba(255, 255, 255, 0.3);
+            border: 2px solid rgba(203, 169, 114, 0.8);
+        }
+
+        /* 过去 - 未完成 */
+        .day-ring.past.incomplete {
+            background: rgba(255, 255, 255, 0.05);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            opacity: 0.4;
+        }
+
+        /* 今天 */
+        .day-ring.today {
+            background: radial-gradient(circle,
+                rgba(255, 255, 255, 0.9) 0%,
+                rgba(203, 169, 114, 0.6) 50%,
+                transparent 100%);
+            box-shadow:
+                0 0 30px rgba(255, 255, 255, 0.8),
+                0 0 60px rgba(203, 169, 114, 0.6);
+            border: 3px solid rgba(255, 255, 255, 0.9);
+            animation: todayPulse 2s ease-in-out infinite;
+        }
+
+        @keyframes todayPulse {
+            0%, 100% {
+                transform: scale(1);
+                box-shadow:
+                    0 0 30px rgba(255, 255, 255, 0.8),
+                    0 0 60px rgba(203, 169, 114, 0.6);
+            }
+            50% {
+                transform: scale(1.05);
+                box-shadow:
+                    0 0 40px rgba(255, 255, 255, 1),
+                    0 0 80px rgba(203, 169, 114, 0.8);
+            }
+        }
+
+        /* 未来 - 幽灵泡泡 */
+        .day-ring.future {
+            background: rgba(173, 216, 230, 0.1);
+            border: 2px dashed rgba(173, 216, 230, 0.3);
+            opacity: 0.5;
+        }
+
+        .day-ring.future::before {
+            content: '';
+            position: absolute;
+            width: 80%;
+            height: 80%;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(173, 216, 230, 0.2), transparent);
+            animation: ghostFloat 4s ease-in-out infinite;
+        }
+
+        @keyframes ghostFloat {
+            0%, 100% { transform: scale(1); opacity: 0.3; }
+            50% { transform: scale(1.1); opacity: 0.6; }
+        }
+
+        /* 日期数字 */
+        .day-number {
+            font-size: 14px;
+            font-weight: 600;
+            color: white;
+            position: relative;
+            z-index: 2;
+        }
+
+        .day-ring.past.incomplete .day-number {
+            color: rgba(255, 255, 255, 0.3);
+        }
+
+        .day-ring.future .day-number {
+            color: rgba(173, 216, 230, 0.5);
+        }
+
+        /* 完成度指示器（小光点） */
+        .completion-dots {
+            position: absolute;
+            bottom: -8px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 3px;
+        }
+
+        .completion-dot {
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: rgba(203, 169, 114, 0.8);
+            box-shadow: 0 0 5px rgba(203, 169, 114, 0.6);
+        }
+
+        /* 月度总览标题 */
+        .month-overview {
+            text-align: center;
+            padding: 30px 20px;
+            position: relative;
+            z-index: 10;
+        }
+
+        .overview-title {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.5);
+            margin-bottom: 10px;
+        }
+
+        .overview-glow {
+            font-size: 48px;
+            font-weight: 700;
+            background: linear-gradient(135deg, rgba(203, 169, 114, 1), rgba(255, 255, 255, 0.8));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 30px rgba(203, 169, 114, 0.5);
+        }
+
+        /* 点击缩放动画 */
+        .day-ring.zooming {
+            animation: zoomIn 0.6s ease-out forwards;
+        }
+
+        @keyframes zoomIn {
+            0% {
+                transform: scale(1);
+                opacity: 1;
+            }
+            50% {
+                transform: scale(3);
+                opacity: 0.8;
+            }
+            100% {
+                transform: scale(10);
+                opacity: 0;
+            }
+        }
+
+        /* 底部提示 */
+        .bottom-hint {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.3);
+            z-index: 100;
+        }
+    </style>
+</head>
+<body>
+    <!-- 星空背景 -->
+    <div class="stars" id="stars"></div>
+
+    <!-- 顶部导航 -->
+    <div class="top-bar">
+        <button class="back-button" onclick="window.location.href='02-home.html'">←</button>
+        <div class="month-title">2026 年 1 月</div>
+        <div class="placeholder"></div>
+    </div>
+
+    <!-- 月度总览 -->
+    <div class="month-overview">
+        <div class="overview-title">这个月你的光芒</div>
+        <div class="overview-glow">18 天</div>
+    </div>
+
+    <!-- 日历容器 -->
+    <div class="calendar-container" id="calendar">
+        <!-- 日期圆环将通过 JS 生成 -->
+    </div>
+
+    <!-- 底部提示 -->
+    <div class="bottom-hint">点击圆环穿越时光</div>
+
+    <script>
+        const calendar = document.getElementById('calendar');
+        const starsContainer = document.getElementById('stars');
+
+        // 生成星空
+        function createStars() {
+            for (let i = 0; i < 100; i++) {
+                const star = document.createElement('div');
+                star.className = 'star';
+                star.style.left = Math.random() * 100 + '%';
+                star.style.top = Math.random() * 100 + '%';
+                star.style.animationDelay = Math.random() * 3 + 's';
+                star.style.opacity = Math.random() * 0.7 + 0.3;
+                starsContainer.appendChild(star);
+            }
+        }
+
+        // 生成日历
+        function createCalendar() {
+            const today = 1; // 假设今天是1月1日
+            const daysInMonth = 31;
+
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dayRing = document.createElement('div');
+                dayRing.className = 'day-ring';
+
+                // 设置状态
+                if (day < today) {
+                    // 过去的日期 - 随机完成/未完成
+                    dayRing.classList.add('past');
+                    if (Math.random() > 0.3) {
+                        dayRing.classList.add('completed');
+
+                        // 添加完成度指示器（1-3个小点）
+                        const dotsCount = Math.floor(Math.random() * 3) + 1;
+                        const dotsContainer = document.createElement('div');
+                        dotsContainer.className = 'completion-dots';
+
+                        for (let i = 0; i < dotsCount; i++) {
+                            const dot = document.createElement('div');
+                            dot.className = 'completion-dot';
+                            dotsContainer.appendChild(dot);
+                        }
+
+                        dayRing.appendChild(dotsContainer);
+                    } else {
+                        dayRing.classList.add('incomplete');
+                    }
+                } else if (day === today) {
+                    // 今天
+                    dayRing.classList.add('today');
+                } else if (day <= today + 3) {
+                    // 未来 3 天（Pro 功能）
+                    dayRing.classList.add('future');
+                } else {
+                    // 未来更远的日期（需要 Pro）
+                    dayRing.classList.add('future');
+                    dayRing.style.opacity = '0.2';
+                }
+
+                // 日期数字
+                const dayNumber = document.createElement('div');
+                dayNumber.className = 'day-number';
+                dayNumber.textContent = day;
+                dayRing.appendChild(dayNumber);
+
+                // 点击事件
+                dayRing.addEventListener('click', function() {
+                    if (day <= today + 3) { // 只有今天和未来3天可以点击
+                        zoomIntoDay(this, day);
+                    }
+                });
+
+                calendar.appendChild(dayRing);
+            }
+        }
+
+        // 缩放进入某一天
+        function zoomIntoDay(ring, day) {
+            ring.classList.add('zooming');
+
+            setTimeout(() => {
+                // 跳转到主页（模拟进入那一天）
+                window.location.href = '02-home.html';
+            }, 400);
+        }
+
+        // 初始化
+        createStars();
+        createCalendar();
+    </script>
+</body>
+</html>

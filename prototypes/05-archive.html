@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LifeBubble - 内在星系</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'PingFang SC', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #0A0A0F;
+            height: 100vh;
+            overflow: hidden;
+            position: relative;
+            color: white;
+        }
+
+        /* 深空背景渐变 */
+        body::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(ellipse at 30% 40%,
+                rgba(50, 30, 80, 0.4),
+                rgba(10, 10, 15, 0.8) 50%,
+                #0A0A0F);
+            animation: nebulaPulse 15s ease-in-out infinite;
+        }
+
+        @keyframes nebulaPulse {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 1; }
+        }
+
+        /* 顶部导航 */
+        .top-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 50px 20px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 100;
+        }
+
+        .back-button {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 20px;
+            color: white;
+            transition: all 0.3s;
+        }
+
+        .back-button:hover {
+            background: rgba(255, 255, 255, 0.15);
+            transform: translateX(-5px);
+        }
+
+        .archive-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: rgba(203, 169, 114, 0.9);
+            text-shadow: 0 0 20px rgba(203, 169, 114, 0.5);
+        }
+
+        .placeholder {
+            width: 40px;
+        }
+
+        /* 星云容器 */
+        .nebula-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 90%;
+            max-width: 600px;
+            height: 600px;
+            perspective: 1000px;
+        }
+
+        /* 3D 星云场景 */
+        .nebula-scene {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            transform-style: preserve-3d;
+            animation: rotate3D 60s linear infinite;
+        }
+
+        @keyframes rotate3D {
+            0% { transform: rotateY(0deg) rotateX(10deg); }
+            100% { transform: rotateY(360deg) rotateX(10deg); }
+        }
+
+        /* 恒星（已完成的阶段目标） */
+        .star-cluster {
+            position: absolute;
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.4s ease;
+        }
+
+        .star-cluster:hover {
+            transform: scale(1.3);
+            z-index: 10;
+        }
+
+        /* 大恒星 - 核心成就 */
+        .star-cluster.major {
+            background: radial-gradient(circle,
+                rgba(255, 215, 0, 1) 0%,
+                rgba(255, 200, 100, 0.8) 30%,
+                rgba(255, 180, 80, 0.4) 60%,
+                transparent 100%);
+            box-shadow:
+                0 0 60px rgba(255, 215, 0, 0.8),
+                0 0 120px rgba(255, 200, 100, 0.5),
+                inset 0 0 30px rgba(255, 255, 255, 0.5);
+            animation: starPulse 4s ease-in-out infinite;
+        }
+
+        /* 中恒星 - 次要成就 */
+        .star-cluster.medium {
+            width: 80px;
+            height: 80px;
+            background: radial-gradient(circle,
+                rgba(203, 169, 114, 1) 0%,
+                rgba(203, 169, 114, 0.7) 40%,
+                rgba(203, 169, 114, 0.3) 70%,
+                transparent 100%);
+            box-shadow:
+                0 0 40px rgba(203, 169, 114, 0.7),
+                0 0 80px rgba(203, 169, 114, 0.4);
+            animation: starPulse 5s ease-in-out infinite;
+        }
+
+        /* 小恒星 - 日常积累 */
+        .star-cluster.small {
+            width: 50px;
+            height: 50px;
+            background: radial-gradient(circle,
+                rgba(173, 216, 230, 0.9) 0%,
+                rgba(173, 216, 230, 0.6) 50%,
+                rgba(173, 216, 230, 0.2) 80%,
+                transparent 100%);
+            box-shadow:
+                0 0 30px rgba(173, 216, 230, 0.6),
+                0 0 60px rgba(173, 216, 230, 0.3);
+            animation: starPulse 6s ease-in-out infinite;
+        }
+
+        @keyframes starPulse {
+            0%, 100% {
+                opacity: 0.8;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 1;
+                transform: scale(1.1);
+            }
+        }
+
+        /* 光河（日常琐事的流动） */
+        .light-river {
+            position: absolute;
+            width: 100%;
+            height: 150px;
+            bottom: 100px;
+            left: 0;
+            pointer-events: none;
+            overflow: hidden;
+        }
+
+        .river-stream {
+            position: absolute;
+            width: 200%;
+            height: 100%;
+            background: linear-gradient(90deg,
+                transparent 0%,
+                rgba(173, 216, 230, 0.1) 10%,
+                rgba(203, 169, 114, 0.3) 30%,
+                rgba(255, 182, 193, 0.2) 50%,
+                rgba(203, 169, 114, 0.3) 70%,
+                rgba(173, 216, 230, 0.1) 90%,
+                transparent 100%);
+            animation: riverFlow 15s linear infinite;
+            filter: blur(20px);
+        }
+
+        @keyframes riverFlow {
+            0% { transform: translateX(-50%); }
+            100% { transform: translateX(0%); }
+        }
+
+        /* 光点粒子 */
+        .light-particle {
+            position: absolute;
+            width: 3px;
+            height: 3px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.8);
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.6);
+            animation: particleDrift 10s ease-in-out infinite;
+        }
+
+        @keyframes particleDrift {
+            0% {
+                transform: translate(0, 0);
+                opacity: 0;
+            }
+            10% {
+                opacity: 1;
+            }
+            90% {
+                opacity: 1;
+            }
+            100% {
+                transform: translate(var(--tx), var(--ty));
+                opacity: 0;
+            }
+        }
+
+        /* 详情面板 */
+        .detail-panel {
+            position: absolute;
+            bottom: -400px;
+            left: 0;
+            right: 0;
+            height: 400px;
+            background: linear-gradient(180deg,
+                rgba(20, 20, 30, 0.95),
+                rgba(10, 10, 15, 0.98));
+            backdrop-filter: blur(30px);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 40px 30px;
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 200;
+        }
+
+        .detail-panel.active {
+            bottom: 0;
+        }
+
+        .detail-close {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .detail-close:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: rotate(90deg);
+        }
+
+        .detail-title {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            background: linear-gradient(135deg, rgba(203, 169, 114, 1), rgba(255, 255, 255, 0.9));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .detail-subtitle {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.5);
+            margin-bottom: 20px;
+        }
+
+        .detail-content {
+            font-size: 16px;
+            line-height: 1.8;
+            color: rgba(255, 255, 255, 0.8);
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        /* 身份卡片 */
+        .identity-cards {
+            position: absolute;
+            top: 120px;
+            right: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            z-index: 50;
+        }
+
+        .identity-card {
+            padding: 15px 20px;
+            background: linear-gradient(135deg,
+                rgba(203, 169, 114, 0.2),
+                rgba(173, 216, 230, 0.15));
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 15px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .identity-card:hover {
+            transform: translateX(-10px);
+            box-shadow: 0 12px 32px rgba(203, 169, 114, 0.4);
+        }
+
+        .card-icon {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .card-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: rgba(203, 169, 114, 1);
+        }
+
+        .card-desc {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.5);
+            margin-top: 3px;
+        }
+
+        /* 统计数据 */
+        .stats-panel {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 40px;
+            z-index: 50;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            background: linear-gradient(135deg, rgba(203, 169, 114, 1), rgba(255, 255, 255, 0.8));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.5);
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <!-- 顶部导航 -->
+    <div class="top-bar">
+        <button class="back-button" onclick="window.location.href='02-home.html'">←</button>
+        <div class="archive-title">生命星系</div>
+        <div class="placeholder"></div>
+    </div>
+
+    <!-- 星云容器 -->
+    <div class="nebula-container">
+        <div class="nebula-scene" id="nebula">
+            <!-- 恒星将通过 JS 生成 -->
+        </div>
+    </div>
+
+    <!-- 光河 -->
+    <div class="light-river">
+        <div class="river-stream"></div>
+        <div id="particles"></div>
+    </div>
+
+    <!-- 身份卡片 -->
+    <div class="identity-cards">
+        <div class="identity-card">
+            <div class="card-icon">🌅</div>
+            <div class="card-title">晨光捕手</div>
+            <div class="card-desc">连续30天早起</div>
+        </div>
+        <div class="identity-card">
+            <div class="card-icon">✍️</div>
+            <div class="card-title">文字织梦者</div>
+            <div class="card-desc">完成10万字创作</div>
+        </div>
+        <div class="identity-card">
+            <div class="card-icon">💫</div>
+            <div class="card-title">星辰旅人</div>
+            <div class="card-desc">坚持180天不离场</div>
+        </div>
+    </div>
+
+    <!-- 统计数据 -->
+    <div class="stats-panel">
+        <div class="stat-item">
+            <div class="stat-value">127</div>
+            <div class="stat-label">完成泡泡</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value">18</div>
+            <div class="stat-label">里程碑</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value">89</div>
+            <div class="stat-label">连续天数</div>
+        </div>
+    </div>
+
+    <!-- 详情面板 -->
+    <div class="detail-panel" id="detailPanel">
+        <button class="detail-close" onclick="closeDetail()">×</button>
+        <div class="detail-title" id="detailTitle">完成第一本书</div>
+        <div class="detail-subtitle" id="detailDate">2025年12月15日达成</div>
+        <div class="detail-content" id="detailContent">
+            这是一段漫长而充实的旅程。从最初模糊的想法，到每天500字的坚持，再到最终10万字的完成。
+            这个过程中，我学会了如何与自己的拖延和解，如何在疲惫时依然前行。
+            这不仅仅是一本书，更是我对自己的一次证明——我可以完成看起来不可能的事情。
+        </div>
+    </div>
+
+    <script>
+        const nebula = document.getElementById('nebula');
+        const detailPanel = document.getElementById('detailPanel');
+        const particlesContainer = document.getElementById('particles');
+
+        // 星系数据
+        const achievements = [
+            { type: 'major', title: '完成第一本书', date: '2025-12-15', x: 50, y: 40, z: 0 },
+            { type: 'medium', title: '30天写作习惯', date: '2025-11-01', x: 30, y: 30, z: -100 },
+            { type: 'medium', title: '突破5万字', date: '2025-10-20', x: 70, y: 50, z: -50 },
+            { type: 'small', title: '第一篇文章', date: '2025-09-01', x: 60, y: 60, z: 50 },
+            { type: 'small', title: '坚持一周', date: '2025-09-07', x: 40, y: 70, z: -30 },
+            { type: 'small', title: '克服拖延', date: '2025-10-01', x: 80, y: 35, z: 20 },
+        ];
+
+        // 创建恒星
+        function createStars() {
+            achievements.forEach(ach => {
+                const star = document.createElement('div');
+                star.className = `star-cluster ${ach.type}`;
+                star.style.left = ach.x + '%';
+                star.style.top = ach.y + '%';
+                star.style.transform = `translateZ(${ach.z}px)`;
+
+                star.addEventListener('click', () => {
+                    showDetail(ach);
+                });
+
+                nebula.appendChild(star);
+            });
+        }
+
+        // 创建光河粒子
+        function createParticles() {
+            for (let i = 0; i < 50; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'light-particle';
+                particle.style.left = Math.random() * 100 + '%';
+                particle.style.top = Math.random() * 100 + '%';
+
+                const tx = (Math.random() - 0.5) * 200;
+                const ty = (Math.random() - 0.5) * 100;
+                particle.style.setProperty('--tx', tx + 'px');
+                particle.style.setProperty('--ty', ty + 'px');
+                particle.style.animationDelay = Math.random() * 10 + 's';
+
+                particlesContainer.appendChild(particle);
+            }
+        }
+
+        // 显示详情
+        function showDetail(achievement) {
+            document.getElementById('detailTitle').textContent = achievement.title;
+            document.getElementById('detailDate').textContent = achievement.date + ' 达成';
+            detailPanel.classList.add('active');
+        }
+
+        // 关闭详情
+        function closeDetail() {
+            detailPanel.classList.remove('active');
+        }
+
+        // 初始化
+        createStars();
+        createParticles();
+
+        // 鼠标移动控制旋转
+        let mouseX = 0;
+        let mouseY = 0;
+
+        document.addEventListener('mousemove', (e) => {
+            mouseX = (e.clientX / window.innerWidth - 0.5) * 20;
+            mouseY = (e.clientY / window.innerHeight - 0.5) * 20;
+
+            nebula.style.transform = `rotateY(${mouseX}deg) rotateX(${-mouseY}deg)`;
+        });
+    </script>
+</body>
+</html>
