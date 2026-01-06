@@ -755,7 +755,7 @@ struct HomeView: View {
                 }
                 .zIndex(100)  // Ensure button is on top of SpriteKit view
 
-                // AI Chat Button (bottom-right)
+                // AI Chat Button (bottom-right) - Enhanced with wisdom entrance feel
                 VStack {
                     Spacer()
                     HStack {
@@ -763,12 +763,52 @@ struct HomeView: View {
 
                         Button(action: { appState.openChat() }) {
                             ZStack {
+                                // Outer rotating light ring
+                                Circle()
+                                    .stroke(
+                                        AngularGradient(
+                                            colors: [
+                                                Color(hex: "FFD700").opacity(0.8),
+                                                Color(hex: "CBA972").opacity(0.6),
+                                                Color(hex: "FFB6C1").opacity(0.5),
+                                                Color(hex: "87CEEB").opacity(0.4),
+                                                Color(hex: "FFD700").opacity(0.8)
+                                            ],
+                                            center: .center
+                                        ),
+                                        lineWidth: 3
+                                    )
+                                    .frame(width: 70, height: 70)
+                                    .blur(radius: 2)
+                                    .rotationEffect(.degrees(archivePulse ? 360 : 0))
+                                    .animation(.linear(duration: 8).repeatForever(autoreverses: false), value: archivePulse)
+
+                                // Pulsing glow layers
                                 Circle()
                                     .fill(
                                         RadialGradient(
                                             colors: [
-                                                Color(hex: "CBA972").opacity(0.6),
-                                                Color(hex: "CBA972").opacity(0.2)
+                                                Color(hex: "FFD700").opacity(0.5),
+                                                Color(hex: "CBA972").opacity(0.3),
+                                                Color.clear
+                                            ],
+                                            center: .center,
+                                            startRadius: 0,
+                                            endRadius: 35
+                                        )
+                                    )
+                                    .frame(width: 70, height: 70)
+                                    .scaleEffect(archivePulse ? 1.3 : 1.0)
+                                    .opacity(archivePulse ? 0.4 : 0.8)
+                                    .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: archivePulse)
+
+                                // Inner core button
+                                Circle()
+                                    .fill(
+                                        RadialGradient(
+                                            colors: [
+                                                Color(hex: "FFD700").opacity(0.7),
+                                                Color(hex: "CBA972").opacity(0.5)
                                             ],
                                             center: .center,
                                             startRadius: 0,
@@ -776,14 +816,16 @@ struct HomeView: View {
                                         )
                                     )
                                     .frame(width: 50, height: 50)
-                                    .shadow(color: Color(hex: "CBA972").opacity(0.5), radius: 20)
-                                    .scaleEffect(archivePulse ? 1.1 : 1.0)
-                                    .animation(.easeInOut(duration: 3).repeatForever(autoreverses: true), value: archivePulse)
-                                    .onAppear { archivePulse = true }
+                                    .shadow(color: Color(hex: "FFD700").opacity(0.6), radius: 15, x: 0, y: 0)
+                                    .shadow(color: Color(hex: "CBA972").opacity(0.4), radius: 25, x: 0, y: 0)
 
+                                // Sparkle icon with subtle scale
                                 Text("✨")
-                                    .font(.system(size: 20))
+                                    .font(.system(size: 22))
+                                    .scaleEffect(archivePulse ? 1.05 : 0.95)
+                                    .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: archivePulse)
                             }
+                            .onAppear { archivePulse = true }
                         }
                         .padding(.trailing, 30)
                         .padding(.bottom, 120)
@@ -893,6 +935,13 @@ struct HomeView: View {
                 bubbleScene.archivePosition = CGPoint(
                     x: geometry.size.width - 55,
                     y: geometry.size.height - 140
+                )
+
+                // Set calendar position (top-left corner, accounting for safe area and button size)
+                // SpriteKit coordinates: origin at bottom-left, so we need to convert from top
+                bubbleScene.calendarPosition = CGPoint(
+                    x: 30,  // 20pt padding + 20pt icon center
+                    y: geometry.size.height - 50  // Convert from top: total height - (20pt padding + 30pt to center)
                 )
 
                 for bubble in appState.bubbles {
@@ -1043,24 +1092,8 @@ class BubbleNode: SKNode {
     // MARK: - Snapshot Rendering
     private func renderCoreBubbleTexture(size: CGFloat) -> SKTexture? {
         if #available(iOS 16.0, *) {
-            // Use EXACT SoapBubbleView.splash configuration with soft edge
+            // Use EXACT SoapBubbleView.splash configuration without stroke
             let bubbleView = SoapBubbleView.splash(size: size)
-                .overlay(
-                    // Add soft edge glow to remove harsh white line
-                    Circle()
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(0.4),
-                                    Color.white.opacity(0.0)
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            ),
-                            lineWidth: 3
-                        )
-                        .blur(radius: 2)
-                )
             return bubbleView.renderToSKTexture(size: CGSize(width: size, height: size))
         } else {
             // Fallback for older iOS versions
@@ -1145,11 +1178,8 @@ class BubbleNode: SKNode {
         self.bubbleSprite = sprite
 
         // RESTORE ANIMATIONS (lost in snapshot)
+        // All bubbles now use breathing animation only
         addBubblePulseAnimation(to: sprite)
-
-        if bubbleType == .core {
-            addRotationAnimation(to: sprite)  // Simulate angular gradient rotation
-        }
     }
 
     // MARK: - Animation Restoration
@@ -1236,6 +1266,7 @@ class BubbleScene: SKScene {
     var onBubbleTapped: ((UUID) -> Void)?
     var onBubbleFlung: ((UUID) -> Void)?
     var archivePosition: CGPoint = .zero
+    var calendarPosition: CGPoint = .zero  // Left-top corner for snooze to tomorrow
 
     private var bubbleNodes: [UUID: BubbleNode] = [:]
     private var draggedBubble: BubbleNode?
@@ -1273,22 +1304,22 @@ class BubbleScene: SKScene {
         turbulenceField.region = SKRegion(size: CGSize(width: size.width * 2, height: size.height * 2))
         addChild(turbulenceField)
 
-        // Larger inset to keep bubbles well within screen bounds (not touching edges)
+        // Screen edge as container - strict boundary with small inset for bubble radius
         let boundaryRect = CGRect(x: 0, y: 0, width: size.width, height: size.height)
-        let insetBounds = boundaryRect.insetBy(dx: 50, dy: 100)  // Increased inset
+        let insetBounds = boundaryRect.insetBy(dx: 20, dy: 20)  // Minimal inset to account for bubble size
         let boundary = SKPhysicsBody(edgeLoopFrom: insetBounds)
         boundary.friction = 0.0
-        boundary.restitution = 0.4  // Softer bounce to keep bubbles from edges
+        boundary.restitution = 0.6  // Slightly bouncy for natural container feel
         physicsBody = boundary
 
-        // Add edge repulsion forces to keep bubbles away from screen edges
+        // Add edge repulsion forces to keep bubbles comfortably within screen bounds
         addEdgeRepulsionFields()
     }
 
     private func addEdgeRepulsionFields() {
-        // Create invisible repulsion fields at screen edges to gently push bubbles inward
-        let edgeStrength: Float = 2.0
-        let edgeWidth: CGFloat = 80
+        // Create stronger repulsion fields to keep bubbles within screen container
+        let edgeStrength: Float = 3.5  // Increased strength for better containment
+        let edgeWidth: CGFloat = 100  // Slightly wider field
 
         // Left edge
         let leftField = SKFieldNode.radialGravityField()
@@ -1474,20 +1505,28 @@ class BubbleScene: SKScene {
         let dy = endPosition.y - dragStartPosition.y
         let distance = sqrt(dx * dx + dy * dy)
         let duration = endTime - dragStartTime
-        let velocity = duration > 0 ? distance / CGFloat(duration) : 0
 
         bubble.physicsBody?.isDynamic = true
 
-        let isFlingGesture = velocity > 800 && distance > 100
+        // Check if bubble was dragged to calendar icon (top-left corner) for snooze to tomorrow
+        let distanceToCalendar = sqrt(pow(endPosition.x - calendarPosition.x, 2) +
+                                     pow(endPosition.y - calendarPosition.y, 2))
+        let isNearCalendar = distanceToCalendar < 100  // 100pt radius around calendar icon
 
-        if isFlingGesture {
+        if isNearCalendar {
+            // Bubble dragged to calendar - snooze to tomorrow
             SoundManager.hapticMedium()
             onBubbleFlung?(bubble.bubbleId)
 
-            let impulse = CGVector(dx: dx * 0.5, dy: dy * 0.5)
+            // Gentle animation toward calendar icon
+            let impulse = CGVector(
+                dx: (calendarPosition.x - endPosition.x) * 0.3,
+                dy: (calendarPosition.y - endPosition.y) * 0.3
+            )
             bubble.physicsBody?.applyImpulse(impulse)
 
         } else if distance < 20 && duration < 0.3 {
+            // Quick tap - pop bubble
             SoundManager.hapticMedium()
             SoundManager.shared.playBubblePop()
             onBubbleTapped?(bubble.bubbleId)
@@ -1525,6 +1564,7 @@ struct BubbleSceneView: UIViewRepresentable {
 struct ChatView: View {
     @EnvironmentObject var appState: AppState
     @State private var inputText = ""
+    @State private var isThinking = false
 
     var body: some View {
         ZStack {
@@ -1543,8 +1583,8 @@ struct ChatView: View {
                 LinearGradient(colors: [Color(hex: "FFF9E6"), Color(hex: "FDFCF8")], startPoint: .top, endPoint: .bottom)
                     .overlay(
                         VStack {
-                            Circle()
-                                .fill(RadialGradient(colors: [.white.opacity(0.9), Color(hex: "ADD8E6").opacity(0.6), Color(hex: "CBA972").opacity(0.4)], center: .center, startRadius: 0, endRadius: 90))
+                            // Enhanced AI Bubble with animated face
+                            AIBubbleAvatar(isThinking: isThinking)
                                 .frame(width: 160, height: 160)
                                 .padding(.top, 20)
 
@@ -1596,9 +1636,169 @@ struct ChatView: View {
         appState.addChatMessage(inputText, isUser: true)
         inputText = ""
 
+        // Show thinking animation
+        isThinking = true
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
             let responses = ["这是一个很棒的想法！", "我们可以从小步开始。", "今天有点累也没关系。"]
             appState.addChatMessage(responses.randomElement()!, isUser: false)
+            isThinking = false
+        }
+    }
+}
+
+// MARK: - ========== AI Bubble Avatar Component ==========
+struct AIBubbleAvatar: View {
+    let isThinking: Bool
+    @State private var breatheScale: CGFloat = 1.0
+    @State private var blinkAnimation = false
+    @State private var mouthAnimation = false
+
+    var body: some View {
+        ZStack {
+            // Bubble body with gradient
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            .white.opacity(0.9),
+                            Color(hex: "ADD8E6").opacity(0.6),
+                            Color(hex: "CBA972").opacity(0.4)
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: 90
+                    )
+                )
+                .scaleEffect(breatheScale)
+                .animation(.easeInOut(duration: 2.5).repeatForever(autoreverses: true), value: breatheScale)
+
+            // Outer glow for wisdom feel
+            Circle()
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            Color(hex: "FFD700").opacity(0.4),
+                            Color(hex: "ADD8E6").opacity(0.3),
+                            Color.clear
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 3
+                )
+                .blur(radius: 4)
+
+            // Face elements
+            VStack(spacing: 15) {
+                // Eyes
+                HStack(spacing: 28) {
+                    // Left eye
+                    EyeView(isBlinking: blinkAnimation, isThinking: isThinking)
+
+                    // Right eye
+                    EyeView(isBlinking: blinkAnimation, isThinking: isThinking)
+                }
+                .padding(.top, 10)
+
+                // Mouth
+                MouthView(isThinking: isThinking, animation: mouthAnimation)
+                    .padding(.top, 5)
+            }
+        }
+        .onAppear {
+            breatheScale = 1.05
+            // Random blink animation
+            startBlinking()
+            // Mouth animation
+            mouthAnimation = true
+        }
+    }
+
+    private func startBlinking() {
+        // Blink every 3-5 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double.random(in: 3...5)) {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                blinkAnimation = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    blinkAnimation = false
+                }
+                startBlinking() // Schedule next blink
+            }
+        }
+    }
+}
+
+// MARK: - Eye Component
+struct EyeView: View {
+    let isBlinking: Bool
+    let isThinking: Bool
+
+    var body: some View {
+        ZStack {
+            // Eye white
+            Capsule()
+                .fill(Color.white.opacity(0.9))
+                .frame(width: 16, height: isBlinking ? 3 : 22)
+                .shadow(color: Color(hex: "ADD8E6").opacity(0.3), radius: 2)
+
+            // Pupil
+            if !isBlinking {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color(hex: "4682B4"),
+                                Color(hex: "1E3A5F")
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 6
+                        )
+                    )
+                    .frame(width: 10, height: 10)
+                    .offset(y: isThinking ? -2 : 0) // Look up when thinking
+                    .animation(.easeInOut(duration: 0.3), value: isThinking)
+
+                // Sparkle in eye
+                Circle()
+                    .fill(Color.white.opacity(0.8))
+                    .frame(width: 3, height: 3)
+                    .offset(x: -2, y: -2)
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: isBlinking)
+    }
+}
+
+// MARK: - Mouth Component
+struct MouthView: View {
+    let isThinking: Bool
+    let animation: Bool
+
+    var body: some View {
+        Group {
+            if isThinking {
+                // Thinking mouth - small 'o' shape
+                Circle()
+                    .stroke(Color(hex: "CBA972").opacity(0.7), lineWidth: 2)
+                    .frame(width: 12, height: 12)
+                    .scaleEffect(animation ? 1.0 : 0.9)
+                    .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: animation)
+            } else {
+                // Happy smile
+                Path { path in
+                    path.move(to: CGPoint(x: 0, y: 0))
+                    path.addQuadCurve(
+                        to: CGPoint(x: 30, y: 0),
+                        control: CGPoint(x: 15, y: 8)
+                    )
+                }
+                .stroke(Color(hex: "CBA972").opacity(0.8), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .frame(width: 30, height: 10)
+            }
         }
     }
 }
