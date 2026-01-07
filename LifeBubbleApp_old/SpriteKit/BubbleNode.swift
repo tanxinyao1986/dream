@@ -2,21 +2,196 @@
 //  BubbleNode.swift
 //  LifeBubble
 //
-//  SpriteKit 泡泡节点 - 物理引擎驱动的肥皂泡
+//  SpriteKit Bubble Node - Physics-driven soap bubble with SwiftUI texture rendering
 //
 
 import SpriteKit
 import SwiftUI
 
-class BubbleNode: SKShapeNode {
+// MARK: - SwiftUI Texture View for Bubble Rendering
+
+struct BubbleTextureView: View {
+    let type: Bubble.BubbleType
+    let color: Color
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            if type == .core {
+                // Core Bubble - Rainbow iridescent orb
+                coreBubbleView
+            } else {
+                // Chore Bubble - Soft pastel orb
+                choreBubbleView
+            }
+        }
+        .frame(width: size, height: size)
+        .background(Color.clear)
+    }
+
+    // Chore Bubble - Match ChatView AI bubble (foggy/hazy)
+    private var choreBubbleView: some View {
+        ZStack {
+            // 1. Outer glow (soft halo)
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            color.opacity(0.4),
+                            color.opacity(0.2),
+                            Color.clear
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: size * 0.55
+                    )
+                )
+                .blur(radius: 20)
+
+            // 2. Inner glow (foggy center)
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.white.opacity(0.9),
+                            color.opacity(0.6),
+                            color.opacity(0.3),
+                            Color.clear
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: size * 0.5
+                    )
+                )
+                .blur(radius: 8)
+
+            // 3. Glass shell (subtle edge)
+            Circle()
+                .stroke(Color.white.opacity(0.4), lineWidth: 1.5)
+                .blur(radius: 0.5)
+
+            // 4. Top-left highlight (reflection)
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.white.opacity(0.9),
+                            Color.white.opacity(0.4),
+                            Color.clear
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: size * 0.2
+                    )
+                )
+                .frame(width: size * 0.4, height: size * 0.4)
+                .offset(x: -size * 0.2, y: -size * 0.2)
+                .blur(radius: 3)
+
+            // 5. Arc highlight (curved reflection)
+            Circle()
+                .trim(from: 0.5, to: 0.75)
+                .stroke(Color.white.opacity(0.6), style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .rotationEffect(.degrees(45))
+                .padding(size * 0.1)
+                .blur(radius: 2)
+        }
+    }
+
+    // Core Bubble - Match CalendarView completed bubble (solid orb with rainbow)
+    private var coreBubbleView: some View {
+        ZStack {
+            // 1. Outer glow (warm shadow)
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color(hex: "8B7355").opacity(0.5),
+                            Color(hex: "8B7355").opacity(0.2),
+                            Color.clear
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: size * 0.6
+                    )
+                )
+                .blur(radius: 25)
+
+            // 2. Base orb (solid color)
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color(hex: "8B7355").opacity(0.7),
+                            Color(hex: "8B7355").opacity(0.4),
+                            Color(hex: "8B7355").opacity(0.2)
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: size * 0.5
+                    )
+                )
+
+            // 3. Rainbow iridescence overlay (screen blend)
+            Circle()
+                .fill(
+                    AngularGradient(
+                        colors: [
+                            Color(hex: "FFD700"),  // Gold
+                            Color(hex: "FF6B9D"),  // Pink
+                            Color(hex: "C77DFF"),  // Purple
+                            Color(hex: "4CC9F0"),  // Blue
+                            Color(hex: "7FE3A0"),  // Green
+                            Color(hex: "FFD700")   // Back to gold
+                        ],
+                        center: .center
+                    )
+                )
+                .opacity(0.3)
+                .blendMode(.screen)
+                .blur(radius: 1)
+
+            // 4. Glass shell stroke
+            Circle()
+                .stroke(Color(hex: "8B7355").opacity(0.6), lineWidth: 2)
+
+            // 5. White highlight (top-left)
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.white.opacity(0.8),
+                            Color.white.opacity(0.3),
+                            Color.clear
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: size * 0.15
+                    )
+                )
+                .frame(width: size * 0.3, height: size * 0.3)
+                .offset(x: -size * 0.2, y: -size * 0.2)
+                .blur(radius: 2)
+
+            // 6. Arc highlight
+            Circle()
+                .trim(from: 0.5, to: 0.7)
+                .stroke(Color.white.opacity(0.5), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .rotationEffect(.degrees(50))
+                .padding(size * 0.12)
+                .blur(radius: 1.5)
+        }
+    }
+}
+
+// MARK: - Bubble Node
+
+class BubbleNode: SKNode {
     let bubbleId: UUID
     let bubbleText: String
     let bubbleType: Bubble.BubbleType
-    var textLabel: SKLabelNode?
-
-    // 视觉参数
-    private var iridescenceLayer: SKShapeNode?
-    private var highlightLayer: SKShapeNode?
+    private var spriteNode: SKSpriteNode!
+    private var textLabel: SKLabelNode!
 
     init(bubble: Bubble, radius: CGFloat) {
         self.bubbleId = bubble.id
@@ -25,28 +200,21 @@ class BubbleNode: SKShapeNode {
 
         super.init()
 
-        // 设置形状
-        let circlePath = CGPath(ellipseIn: CGRect(x: -radius, y: -radius, width: radius * 2, height: radius * 2), transform: nil)
-        self.path = circlePath
+        // Generate texture from SwiftUI
+        let texture = generateTexture(type: bubble.type, radius: radius)
 
-        // 基础透明填充
-        self.fillColor = bubbleType == .core ?
-            UIColor(Color(hex: "FFD700")).withAlphaComponent(0.25) : // 核心泡泡 - 金色基底，更高饱和度
-            BubbleNode.randomMutedPastelColor().withAlphaComponent(0.12) // 琐事泡泡 - 柔和
+        // Create sprite node with texture
+        spriteNode = SKSpriteNode(texture: texture)
+        spriteNode.size = CGSize(width: radius * 2, height: radius * 2)
+        addChild(spriteNode)
 
-        // 柔和边缘 - 使用渐变过渡而非硬边
-        self.strokeColor = .clear
-        self.lineWidth = 0
-
-        // 物理体设置
+        // Setup physics
         setupPhysicsBody(radius: radius)
 
-        // 添加视觉层
-        addIridescenceEffect(radius: radius)
-        addHighlight(radius: radius)
+        // Add text label
         addTextLabel(radius: radius)
 
-        // 添加呼吸动画
+        // Add breathing animation
         addBreathingAnimation()
     }
 
@@ -54,274 +222,159 @@ class BubbleNode: SKShapeNode {
         fatalError("init(coder:) has not been implemented")
     }
 
-    // MARK: - 物理引擎设置
+    // MARK: - Texture Generation
+
+    private func generateTexture(type: Bubble.BubbleType, radius: CGFloat) -> SKTexture {
+        let size = radius * 2
+
+        // Select color based on type
+        let color: Color
+        if type == .core {
+            color = Color(hex: "8B7355")  // Match calendar
+        } else {
+            // Random pastel colors for chore bubbles
+            let pastelColors: [Color] = [
+                Color(hex: "ADD8E6"),  // Light blue
+                Color(hex: "FFB6C1"),  // Pink
+                Color(hex: "D6D1C8"),  // Warm gray
+                Color(hex: "E8DCC8"),  // Beige
+                Color(hex: "CBA972")   // Gold
+            ]
+            color = pastelColors.randomElement()!
+        }
+
+        // Create SwiftUI view
+        let bubbleView = BubbleTextureView(type: type, color: color, size: size)
+
+        // Render to texture using ImageRenderer
+        let renderer = ImageRenderer(content: bubbleView)
+        renderer.scale = UIScreen.main.scale
+
+        // Generate UIImage with transparent background
+        guard let uiImage = renderer.uiImage else {
+            // Fallback: simple circle texture
+            return generateFallbackTexture(size: size, color: UIColor(color))
+        }
+
+        // Convert to SKTexture
+        let texture = SKTexture(image: uiImage)
+        texture.filteringMode = .linear
+
+        return texture
+    }
+
+    // Fallback texture if rendering fails
+    private func generateFallbackTexture(size: CGFloat, color: UIColor) -> SKTexture {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+        let image = renderer.image { context in
+            context.cgContext.setFillColor(color.cgColor)
+            context.cgContext.fillEllipse(in: CGRect(x: 0, y: 0, width: size, height: size))
+        }
+        return SKTexture(image: image)
+    }
+
+    // MARK: - Physics Setup
+
     private func setupPhysicsBody(radius: CGFloat) {
-        self.physicsBody = SKPhysicsBody(circleOfRadius: radius)
-        self.physicsBody?.isDynamic = true
-        self.physicsBody?.mass = bubbleType == .core ? 1.5 : 0.8
-        self.physicsBody?.friction = 0.0 // 无摩擦
-        self.physicsBody?.restitution = 0.6 // 柔和弹性
-        self.physicsBody?.linearDamping = 4.0 // 空气阻力 - 显著增加以极大减缓移动
-        self.physicsBody?.angularDamping = 0.8 // 旋转阻尼
-        self.physicsBody?.allowsRotation = false // 禁止旋转
-        self.physicsBody?.categoryBitMask = 1
-        self.physicsBody?.contactTestBitMask = 1
-        self.physicsBody?.collisionBitMask = 1
+        let physicsBody = SKPhysicsBody(circleOfRadius: radius)
+        physicsBody.isDynamic = true
+        physicsBody.mass = bubbleType == .core ? 1.5 : 0.8
+        physicsBody.friction = 0.0
+        physicsBody.restitution = 0.6
+        physicsBody.linearDamping = 2.0  // Slower movement
+        physicsBody.angularDamping = 0.8
+        physicsBody.allowsRotation = false
+        physicsBody.categoryBitMask = 1
+        physicsBody.contactTestBitMask = 1
+        physicsBody.collisionBitMask = 1
 
-        // 减少初始速度 - 非常缓慢的漂浮 (50% slower)
-        self.physicsBody?.velocity = CGVector(dx: CGFloat.random(in: -4...4), dy: CGFloat.random(in: -4...4))
+        // Gentle initial velocity
+        physicsBody.velocity = CGVector(dx: CGFloat.random(in: -4...4), dy: CGFloat.random(in: -4...4))
+
+        self.physicsBody = physicsBody
     }
 
-    // MARK: - 视觉效果
-    private func addIridescenceEffect(radius: CGFloat) {
-        if bubbleType == .core {
-            // 核心泡泡 - 印象派油画般的七彩光芒
-            addImpressionistRainbowEffect(radius: radius)
-        } else {
-            // 琐事泡泡 - 柔和单色
-            addSubtleColorEffect(radius: radius)
-        }
-
-        // Add irregular transparency mask at edges
-        addIrregularEdgeMask(radius: radius)
-    }
-
-    // 核心泡泡 - 印象派七彩效果
-    private func addImpressionistRainbowEffect(radius: CGFloat) {
-        // 七彩基础色 - 高饱和度
-        let vibrantColors: [UIColor] = [
-            UIColor(Color(hex: "FFD700")).withAlphaComponent(0.5), // 金
-            UIColor(Color(hex: "FF6B9D")).withAlphaComponent(0.5), // 玫粉
-            UIColor(Color(hex: "C77DFF")).withAlphaComponent(0.5), // 亮紫
-            UIColor(Color(hex: "4CC9F0")).withAlphaComponent(0.5), // 青蓝
-            UIColor(Color(hex: "7FE3A0")).withAlphaComponent(0.5), // 翠绿
-            UIColor(Color(hex: "FF9770")).withAlphaComponent(0.5), // 珊瑚橙
-            UIColor(Color(hex: "FFE66D")).withAlphaComponent(0.5)  // 明黄
-        ]
-
-        // 创建多层渐变圆，模拟油画笔触交融
-        // 第一层：大面积色块基础
-        for i in 0..<7 {
-            let colorLayer = SKShapeNode(circleOfRadius: radius * 0.95)
-            colorLayer.fillColor = vibrantColors[i]
-            colorLayer.strokeColor = .clear
-            colorLayer.blendMode = .add // 颜色叠加混合
-            colorLayer.zPosition = CGFloat(1 + i) * 0.1
-
-            self.addChild(colorLayer)
-
-            // 缓慢呼吸式的透明度变化 - 模拟光线流动
-            let fadeOut = SKAction.fadeAlpha(to: 0.2, duration: 3.0 + Double(i) * 0.5)
-            let fadeIn = SKAction.fadeAlpha(to: 0.5, duration: 3.0 + Double(i) * 0.5)
-            let breathe = SKAction.sequence([fadeOut, fadeIn])
-            colorLayer.run(SKAction.repeatForever(breathe))
-
-            if i == 0 {
-                self.iridescenceLayer = colorLayer
-            }
-        }
-
-        // 第二层：中等色块 - 增加色彩深度
-        for i in 0..<5 {
-            let midLayer = SKShapeNode(circleOfRadius: radius * 0.7)
-            midLayer.fillColor = vibrantColors[(i + 2) % vibrantColors.count]
-            midLayer.strokeColor = .clear
-            midLayer.blendMode = .add
-            midLayer.zPosition = 1.5 + CGFloat(i) * 0.1
-
-            self.addChild(midLayer)
-
-            // 反向呼吸 - 创造动态交织
-            let fadeOut = SKAction.fadeAlpha(to: 0.15, duration: 4.0 + Double(i) * 0.3)
-            let fadeIn = SKAction.fadeAlpha(to: 0.4, duration: 4.0 + Double(i) * 0.3)
-            let breathe = SKAction.sequence([fadeIn, fadeOut])
-            midLayer.run(SKAction.repeatForever(breathe))
-        }
-
-        // 第三层：小范围高光色斑 - 印象派点彩效果
-        for i in 0..<8 {
-            let spotSize = radius * CGFloat.random(in: 0.3...0.5)
-            let spotLayer = SKShapeNode(circleOfRadius: spotSize)
-
-            // 随机位置偏移
-            let angle = Double(i) * (2.0 * .pi / 8.0)
-            let distance = radius * CGFloat.random(in: 0.2...0.4)
-            let offsetX = cos(angle) * distance
-            let offsetY = sin(angle) * distance
-            spotLayer.position = CGPoint(x: offsetX, y: offsetY)
-
-            spotLayer.fillColor = vibrantColors[i % vibrantColors.count]
-            spotLayer.strokeColor = .clear
-            spotLayer.blendMode = .add
-            spotLayer.zPosition = 2.0 + CGFloat(i) * 0.05
-
-            self.addChild(spotLayer)
-
-            // 轻微的脉动
-            let pulse = SKAction.sequence([
-                SKAction.fadeAlpha(to: 0.1, duration: 2.5),
-                SKAction.fadeAlpha(to: 0.35, duration: 2.5)
-            ])
-            spotLayer.run(SKAction.repeatForever(pulse))
-        }
-    }
-
-    // 琐事泡泡 - 柔和效果
-    private func addSubtleColorEffect(radius: CGFloat) {
-        // 单一柔和色调
-        let subtleColor = BubbleNode.randomMutedPastelColor().withAlphaComponent(0.25)
-
-        let colorLayer = SKShapeNode(circleOfRadius: radius * 0.9)
-        colorLayer.fillColor = subtleColor
-        colorLayer.strokeColor = .clear
-        colorLayer.blendMode = .add
-        colorLayer.zPosition = 1
-
-        self.addChild(colorLayer)
-        self.iridescenceLayer = colorLayer
-
-        // 柔和呼吸
-        let fadeOut = SKAction.fadeAlpha(to: 0.15, duration: 3.5)
-        let fadeIn = SKAction.fadeAlpha(to: 0.25, duration: 3.5)
-        let breathe = SKAction.sequence([fadeOut, fadeIn])
-        colorLayer.run(SKAction.repeatForever(breathe))
-    }
-
-    private func addIrregularEdgeMask(radius: CGFloat) {
-        // Create smooth radial gradient for natural sphere appearance
-        // More layers for smoother transition from center to edge
-        let layerCount = 12
-
-        for i in 0..<layerCount {
-            let progress = Double(i) / Double(layerCount)
-            let ringRadius = radius * (1.0 - progress * 0.15)
-
-            let maskRing = SKShapeNode(circleOfRadius: ringRadius)
-
-            // Smooth gradient: brighter in center, fading toward edges
-            let alpha = 0.08 * (1.0 - progress * 0.7)
-            maskRing.fillColor = UIColor.white.withAlphaComponent(alpha)
-            maskRing.strokeColor = .clear
-            maskRing.blendMode = .add
-            maskRing.zPosition = 0.5 + Double(i) * 0.01
-
-            self.addChild(maskRing)
-        }
-
-        // Add subtle outer rim for sphere definition without harsh line
-        let outerRim = SKShapeNode(circleOfRadius: radius - 1)
-        outerRim.fillColor = .clear
-        outerRim.strokeColor = UIColor.white.withAlphaComponent(0.15)
-        outerRim.lineWidth = 1.5
-        outerRim.zPosition = 0.4
-        self.addChild(outerRim)
-    }
-
-    private func addHighlight(radius: CGFloat) {
-        if bubbleType == .core {
-            // 核心泡泡 - 多彩高光
-            // 主高光 - 金白色
-            let mainHighlight = SKShapeNode(circleOfRadius: radius * 0.4)
-            mainHighlight.position = CGPoint(x: -radius * 0.3, y: radius * 0.3)
-            mainHighlight.fillColor = UIColor(Color(hex: "FFFACD")).withAlphaComponent(0.8) // 柠檬绸色
-            mainHighlight.strokeColor = .clear
-            mainHighlight.zPosition = 3
-
-            self.addChild(mainHighlight)
-            self.highlightLayer = mainHighlight
-
-            // 主高光呼吸
-            let fadeOut = SKAction.fadeAlpha(to: 0.5, duration: 2.5)
-            let fadeIn = SKAction.fadeAlpha(to: 0.8, duration: 2.5)
-            let pulse = SKAction.sequence([fadeOut, fadeIn])
-            mainHighlight.run(SKAction.repeatForever(pulse))
-
-            // 次级彩色高光 - 增强印象派效果
-            let coloredHighlight = SKShapeNode(circleOfRadius: radius * 0.25)
-            coloredHighlight.position = CGPoint(x: -radius * 0.25, y: radius * 0.35)
-            coloredHighlight.fillColor = UIColor(Color(hex: "FFB6C1")).withAlphaComponent(0.6) // 粉色
-            coloredHighlight.strokeColor = .clear
-            coloredHighlight.blendMode = .add
-            coloredHighlight.zPosition = 3.1
-
-            self.addChild(coloredHighlight)
-
-            // 彩色高光微微脉动
-            let colorPulse = SKAction.sequence([
-                SKAction.fadeAlpha(to: 0.3, duration: 3.0),
-                SKAction.fadeAlpha(to: 0.6, duration: 3.0)
-            ])
-            coloredHighlight.run(SKAction.repeatForever(colorPulse))
-
-        } else {
-            // 琐事泡泡 - 简单白色高光
-            let highlight = SKShapeNode(circleOfRadius: radius * 0.35)
-            highlight.position = CGPoint(x: -radius * 0.3, y: radius * 0.3)
-            highlight.fillColor = UIColor.white.withAlphaComponent(0.6)
-            highlight.strokeColor = .clear
-            highlight.zPosition = 3
-
-            self.addChild(highlight)
-            self.highlightLayer = highlight
-
-            // 高光闪烁
-            let fadeOut = SKAction.fadeAlpha(to: 0.3, duration: 2.5)
-            let fadeIn = SKAction.fadeAlpha(to: 0.6, duration: 2.5)
-            let pulse = SKAction.sequence([fadeOut, fadeIn])
-            highlight.run(SKAction.repeatForever(pulse))
-        }
-    }
+    // MARK: - Text Label
 
     private func addTextLabel(radius: CGFloat) {
-        let label = SKLabelNode(text: bubbleText)
-        label.fontName = "HelveticaNeue-Medium"
-        label.fontSize = bubbleType == .core ? 16 : 13
-        label.fontColor = UIColor(Color(hex: "6B6B6B"))
-        label.verticalAlignmentMode = .center
-        label.horizontalAlignmentMode = .center
-        label.numberOfLines = 0
-        label.preferredMaxLayoutWidth = radius * 1.6
-        label.zPosition = 3
+        textLabel = SKLabelNode(text: bubbleText)
+        textLabel.fontName = "HelveticaNeue-Medium"
+        textLabel.fontSize = bubbleType == .core ? 16 : 13
+        textLabel.fontColor = UIColor(Color(hex: "6B6B6B"))
+        textLabel.verticalAlignmentMode = .center
+        textLabel.horizontalAlignmentMode = .center
+        textLabel.numberOfLines = 0
+        textLabel.preferredMaxLayoutWidth = radius * 1.6
+        textLabel.zPosition = 10
 
-        self.addChild(label)
-        self.textLabel = label
+        addChild(textLabel)
     }
+
+    // MARK: - Breathing Animation
 
     private func addBreathingAnimation() {
+        // Breathing scale animation
         let scaleUp = SKAction.scale(to: 1.05, duration: Double.random(in: 3...5))
-        let scaleDown = SKAction.scale(to: 1.0, duration: Double.random(in: 3...5))
+        let scaleDown = SKAction.scale(to: 0.95, duration: Double.random(in: 3...5))
         let breathe = SKAction.sequence([scaleUp, scaleDown])
-        self.run(SKAction.repeatForever(breathe))
+        spriteNode.run(SKAction.repeatForever(breathe))
+
+        // Subtle rotation animation for core bubbles (to show iridescence)
+        if bubbleType == .core {
+            let rotateLeft = SKAction.rotate(byAngle: .pi / 12, duration: 4.0)
+            let rotateRight = SKAction.rotate(byAngle: -.pi / 12, duration: 4.0)
+            let rotate = SKAction.sequence([rotateLeft, rotateRight])
+            spriteNode.run(SKAction.repeatForever(rotate))
+        }
+
+        // Gentle alpha pulsing
+        let fadeOut = SKAction.fadeAlpha(to: 0.85, duration: 3.0)
+        let fadeIn = SKAction.fadeAlpha(to: 1.0, duration: 3.0)
+        let pulse = SKAction.sequence([fadeOut, fadeIn])
+        spriteNode.run(SKAction.repeatForever(pulse))
     }
 
-    // MARK: - 破裂动画
-    func burst(completion: @escaping () -> Void) {
-        // 停止所有动画
-        self.removeAllActions()
+    // MARK: - Burst Animation
 
-        // 膨胀 + 淡出
+    func burst(completion: @escaping () -> Void) {
+        // Stop all animations
+        spriteNode.removeAllActions()
+
+        // Scale + fade out
         let scale = SKAction.scale(to: 1.3, duration: 0.2)
         let fade = SKAction.fadeOut(withDuration: 0.2)
         let group = SKAction.group([scale, fade])
 
-        self.run(group) {
+        spriteNode.run(group) {
             completion()
         }
     }
+}
 
-    // MARK: - Muted Earth Tone Color Generator
-    static func randomMutedPastelColor() -> UIColor {
-        // Muted Earth Tones (Low Saturation, High Brightness)
-        let mutedEarthTones: [UIColor] = [
-            UIColor(Color(hex: "D6D1C8")), // Warm Gray
-            UIColor(Color(hex: "E8DCC8")), // Beige
-            UIColor(Color(hex: "E8E4C8")), // Pale Yellow-Gray
-            UIColor(Color(hex: "E4D8CC")), // Sand
-            UIColor(Color(hex: "D8CFC4")), // Muted Brown-Gray
-            UIColor(Color(hex: "DCD6D0")), // Soft Taupe
-            UIColor(Color(hex: "E0D8D0")), // Light Stone
-            UIColor(Color(hex: "D4CEC4"))  // Greige (Gray-Beige)
-        ]
-        return mutedEarthTones.randomElement() ?? UIColor(Color(hex: "E8E8E8"))
+// MARK: - Color Extension (Hex Support)
+
+extension Color {
+    init(hex: String) {
+        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: hex).scanHexInt64(&int)
+        let a, r, g, b: UInt64
+        switch hex.count {
+        case 3: // RGB (12-bit)
+            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
+        case 6: // RGB (24-bit)
+            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
+        case 8: // ARGB (32-bit)
+            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        default:
+            (a, r, g, b) = (255, 0, 0, 0)
+        }
+        self.init(
+            .sRGB,
+            red: Double(r) / 255,
+            green: Double(g) / 255,
+            blue: Double(b) / 255,
+            opacity: Double(a) / 255
+        )
     }
 }

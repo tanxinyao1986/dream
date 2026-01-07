@@ -28,8 +28,8 @@ class BubbleScene: SKScene {
 
     // MARK: - 物理世界设置
     private func setupPhysicsWorld() {
-        // 几乎零重力（泡泡漂浮感）
-        physicsWorld.gravity = CGVector(dx: 0, dy: -0.2)
+        // Zero gravity (pure floating)
+        physicsWorld.gravity = CGVector(dx: 0, dy: 0)
         physicsWorld.speed = 1.0
     }
 

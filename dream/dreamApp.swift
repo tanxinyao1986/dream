@@ -419,7 +419,7 @@ struct SplashView: View {
     @State private var pulseAnimation = false
     @State private var showQuote = false
 
-    private let dailyMessage = "今天，让我们从一个小小的愿望开始"
+    private let dailyMessage = "Light up the little things."
     private let maxBubbleScale: CGFloat = 4.5
 
     var body: some View {
@@ -448,6 +448,12 @@ struct SplashView: View {
 
             VStack(spacing: 60) {
                 Spacer()
+
+                // App Name: Lumi
+                Text("Lumi")
+                    .font(.system(size: 48, weight: .light))
+                    .foregroundColor(Color(hex: "CBA972"))
+                    .opacity(showQuote ? 1 : 0)
 
                 ZStack {
                     Circle()
@@ -488,7 +494,7 @@ struct SplashView: View {
                     .padding(.horizontal, 40)
                 }
 
-                Text("长按光球进入")
+                Text("Long press to enter")
                     .font(.system(size: 14))
                     .foregroundColor(Color(hex: "6B6B6B").opacity(0.5))
                     .opacity(isLongPressing ? 0 : 1)
@@ -2056,85 +2062,388 @@ struct StarField: View {
     }
 }
 
-// MARK: - ========== 5. 档案（保留原版）==========
+// MARK: - ========== 5. L5 "Luminous Echo" - The Sanctuary (Archive View with Atmosphere & Flashlight) ==========
 struct ArchiveView: View {
     @EnvironmentObject var appState: AppState
+    @State private var selectedGoal: CompletedGoal?
+    @State private var showOverlay = false
+
+    // 示例完成目标（稍后替换为 SwiftData）
+    private let completedGoals: [CompletedGoal] = [
+        CompletedGoal(
+            title: "完成第一本小说",
+            aiWitnessText: "日复一日的书写中，碎片化的想法逐渐凝聚成完整的故事。",
+            season: "2024 春",
+            position: CGPoint(x: 0.5, y: 0.0),
+            color: Color(hex: "FFD700")
+        ),
+        CompletedGoal(
+            title: "30天冥想之旅",
+            aiWitnessText: "每个清晨的呼吸，都成为了稳定心绪的锚点，平息着思绪的波澜。",
+            season: "2025 冬",
+            position: CGPoint(x: 0.5, y: 0.2),
+            color: Color(hex: "87CEEB")
+        ),
+        CompletedGoal(
+            title: "学会钢琴基础",
+            aiWitnessText: "手指在琴键上找到了自己的声音，将寂静转化为旋律。",
+            season: "2024 秋",
+            position: CGPoint(x: 0.5, y: 0.4),
+            color: Color(hex: "DDA0DD")
+        ),
+        CompletedGoal(
+            title: "阅读50本书",
+            aiWitnessText: "一个个世界如同石块般堆叠，搭建起通往理解的桥梁。",
+            season: "2025 夏",
+            position: CGPoint(x: 0.5, y: 0.6),
+            color: Color(hex: "CBA972")
+        ),
+        CompletedGoal(
+            title: "晨间仪式",
+            aiWitnessText: "黎明又黎明，微小的仪式编织出蜕变人生的织锦。",
+            season: "2025 春",
+            position: CGPoint(x: 0.5, y: 0.8),
+            color: Color(hex: "FFB6C1")
+        ),
+        CompletedGoal(
+            title: "健康饮食挑战",
+            aiWitnessText: "每一餐的选择，都是对自己身体的温柔对话。",
+            season: "2024 夏",
+            position: CGPoint(x: 0.5, y: 1.0),
+            color: Color(hex: "98D8C8")
+        )
+    ]
+
+    // Horizontal scatter offsets for irregular layout
+    private let scatterOffsets: [CGFloat] = [-80, 60, -40, 70, -60, 50]
 
     var body: some View {
         ZStack {
-            Color(hex: "0A0A0F").ignoresSafeArea()
+            // LAYER 1: Deep, dark background
+            LinearGradient(
+                colors: [
+                    Color(hex: "1C1C2E"),  // Dark Navy
+                    Color(hex: "14141E"),  // Deep Charcoal
+                    Color(hex: "0A0A0F")   // Almost black
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
 
-            ScrollView {
-                VStack {
-                    HStack {
-                        Button(action: { appState.closeArchive() }) {
-                            Image(systemName: "chevron.left")
-                                .foregroundColor(.white)
-                                .frame(width: 40, height: 40)
-                                .background(Circle().fill(.white.opacity(0.1)))
-                        }
-                        Spacer()
-                        Text("生命星系").foregroundColor(Color(hex: "CBA972"))
-                        Spacer()
-                        Color.clear.frame(width: 40)
-                    }
-                    .padding()
-
-                    ZStack {
-                        Circle().fill(RadialGradient(colors: [Color(hex: "FFD700"), .clear], center: .center, startRadius: 0, endRadius: 50))
-                            .frame(width: 100, height: 100)
-                            .position(x: 150, y: 100)
-                        Circle().fill(RadialGradient(colors: [Color(hex: "CBA972"), .clear], center: .center, startRadius: 0, endRadius: 35))
-                            .frame(width: 70, height: 70)
-                            .position(x: 250, y: 150)
-                    }
-                    .frame(height: 300)
-
-                    VStack(spacing: 15) {
-                        IdentityCard(icon: "🌅", title: "晨光捕手", desc: "连续30天早起")
-                        IdentityCard(icon: "✍️", title: "文字织梦者", desc: "完成10万字创作")
-                        IdentityCard(icon: "💫", title: "星辰旅人", desc: "坚持180天不离场")
-                    }
-                    .padding()
-
-                    HStack(spacing: 40) {
-                        VStack {
-                            Text("127").font(.system(size: 36, weight: .bold)).foregroundColor(Color(hex: "CBA972"))
-                            Text("完成泡泡").foregroundColor(.white.opacity(0.5))
-                        }
-                        VStack {
-                            Text("18").font(.system(size: 36, weight: .bold)).foregroundColor(Color(hex: "CBA972"))
-                            Text("里程碑").foregroundColor(.white.opacity(0.5))
-                        }
-                        VStack {
-                            Text("89").font(.system(size: 36, weight: .bold)).foregroundColor(Color(hex: "CBA972"))
-                            Text("连续天数").foregroundColor(.white.opacity(0.5))
-                        }
-                    }
-                    .padding(.vertical, 30)
+            // LAYER 2: Visible White Fog Blobs (Backlight - Alpha 0.15)
+            ZStack {
+                ForEach(0..<6, id: \.self) { index in
+                    VisibleBacklightFog(index: index)
                 }
+            }
+
+            // LAYER 3: Ambient Stars (Bigger - Radius 2.0-3.0)
+            AmbientStarsBackground()
+
+            // LAYER 4: Scrollable List with Irregular Scatter + Enhanced Flashlight Effect
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 140) {
+                    ForEach(Array(completedGoals.enumerated()), id: \.element.id) { index, goal in
+                        EnhancedFlashlightLightOrb(
+                            goal: goal,
+                            xOffset: scatterOffsets[index % scatterOffsets.count]
+                        )
+                        .onTapGesture {
+                            withAnimation(.easeOut(duration: 0.3)) {
+                                selectedGoal = goal
+                                showOverlay = true
+                            }
+                            SoundManager.hapticLight()
+                        }
+                    }
+                }
+                .padding(.vertical, 250)  // Add padding so items can scroll to center
+            }
+
+            // LAYER 5: Navigation header (Fixed)
+            VStack {
+                HStack {
+                    Button(action: {
+                        appState.closeArchive()
+                    }) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundColor(.white.opacity(0.8))
+                            .frame(width: 40, height: 40)
+                            .background(
+                                Circle()
+                                    .fill(Color.white.opacity(0.05))
+                                    .overlay(
+                                        Circle()
+                                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                                    )
+                            )
+                    }
+
+                    Spacer()
+
+                    Text("光之回响")
+                        .font(.custom("Georgia", size: 16))
+                        .italic()
+                        .foregroundColor(Color(hex: "CBA972").opacity(0.8))
+
+                    Spacer()
+
+                    Color.clear
+                        .frame(width: 40, height: 40)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+
+                Spacer()
+            }
+
+            // LAYER 6: Overlay reveal when orb is tapped
+            if showOverlay, let goal = selectedGoal {
+                Color.black.opacity(0.7)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            showOverlay = false
+                        }
+                    }
+
+                RecallOverlay(goal: goal)
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
             }
         }
     }
 }
 
-struct IdentityCard: View {
-    let icon: String
-    let title: String
-    let desc: String
+// MARK: - Visible Backlight Fog Component (Alpha 0.15 - Acts as Backlight)
+struct VisibleBacklightFog: View {
+    let index: Int
+
+    @State private var position: CGPoint = .zero
+    @State private var opacity: Double = 0.0
 
     var body: some View {
-        HStack {
-            Text(icon).font(.system(size: 32))
-            VStack(alignment: .leading) {
-                Text(title).foregroundColor(Color(hex: "CBA972"))
-                Text(desc).font(.system(size: 12)).foregroundColor(.white.opacity(0.5))
-            }
-            Spacer()
+        GeometryReader { geometry in
+            Circle()
+                .fill(Color.white)
+                .frame(
+                    width: CGFloat.random(in: 200...350),  // Slightly smaller
+                    height: CGFloat.random(in: 200...350)
+                )
+                .blur(radius: CGFloat.random(in: 80...120))
+                .position(position)
+                .opacity(opacity)
+                .blendMode(.plusLighter)  // Makes it glow like backlight
+                .onAppear {
+                    // Initial random position
+                    position = CGPoint(
+                        x: CGFloat.random(in: 0...geometry.size.width),
+                        y: CGFloat.random(in: 0...geometry.size.height)
+                    )
+
+                    // Visible backlight - Alpha 0.15
+                    withAnimation(.easeIn(duration: 4.0).delay(Double(index) * 0.4)) {
+                        opacity = 0.15  // VISIBLE as backlight
+                    }
+
+                    // Slow drift
+                    startDrifting(geometry: geometry)
+                }
         }
-        .padding()
-        .background(RoundedRectangle(cornerRadius: 15).fill(.ultraThinMaterial))
     }
+
+    private func startDrifting(geometry: GeometryProxy) {
+        let duration = Double.random(in: 120...180)
+        let newPosition = CGPoint(
+            x: CGFloat.random(in: -80...geometry.size.width + 80),
+            y: CGFloat.random(in: -80...geometry.size.height + 80)
+        )
+
+        withAnimation(.linear(duration: duration)) {
+            position = newPosition
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+            startDrifting(geometry: geometry)
+        }
+    }
+}
+
+// MARK: - Ambient Stars Background (Bigger - Radius 2.0-3.0)
+struct AmbientStarsBackground: View {
+    @State private var stars: [AmbientStar] = []
+
+    var body: some View {
+        ZStack {
+            ForEach(stars) { star in
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: star.size, height: star.size)
+                    .position(star.position)
+                    .opacity(star.opacity)
+                    .animation(
+                        .easeInOut(duration: Double.random(in: 3...6))
+                            .repeatForever(autoreverses: true)
+                            .delay(star.delay),
+                        value: star.opacity
+                    )
+            }
+        }
+        .onAppear {
+            generateStars()
+        }
+    }
+
+    private func generateStars() {
+        let screenWidth = UIScreen.main.bounds.width
+        let screenHeight = UIScreen.main.bounds.height
+
+        stars = (0..<80).map { _ in
+            AmbientStar(
+                position: CGPoint(
+                    x: CGFloat.random(in: 0...screenWidth),
+                    y: CGFloat.random(in: 0...screenHeight)
+                ),
+                size: CGFloat.random(in: 2.0...3.0),  // BIGGER stars (2.0-3.0)
+                opacity: Double.random(in: 0.4...0.8),
+                delay: Double.random(in: 0...4)
+            )
+        }
+    }
+}
+
+struct AmbientStar: Identifiable {
+    let id = UUID()
+    let position: CGPoint
+    let size: CGFloat
+    let opacity: Double
+    let delay: Double
+}
+
+// MARK: - Enhanced Flashlight Light Orb (DRAMATIC Scaling + Irregular Scatter)
+struct EnhancedFlashlightLightOrb: View {
+    let goal: CompletedGoal
+    let xOffset: CGFloat  // Horizontal scatter offset
+
+    var body: some View {
+        GeometryReader { geometry in
+            let screenCenterY = UIScreen.main.bounds.height / 2
+            let itemCenterY = geometry.frame(in: .global).midY
+            let distanceFromCenter = abs(itemCenterY - screenCenterY)
+
+            // ENHANCED DRAMATIC SCALING
+            // Max scale: 1.8x (REALLY POP!)
+            // Min scale: 0.6x (Much smaller)
+            let scale = max(0.6, min(1.8, 1.8 - (distanceFromCenter / 300)))
+
+            // Opacity: Fade distant items to 0.4
+            let opacity = max(0.4, 1.0 - (distanceFromCenter / 350))
+
+            ZStack {
+                // Outer glow
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                goal.color.opacity(0.6),
+                                goal.color.opacity(0.4),
+                                goal.color.opacity(0.2),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 60
+                        )
+                    )
+                    .frame(width: 120, height: 120)
+                    .blur(radius: 18)
+
+                // Core light
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color.white.opacity(0.95),
+                                goal.color.opacity(0.9),
+                                goal.color.opacity(0.7)
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 22
+                        )
+                    )
+                    .frame(width: 44, height: 44)
+                    .shadow(color: goal.color.opacity(0.8), radius: 25, x: 0, y: 0)
+            }
+            .scaleEffect(scale)  // DRAMATIC flashlight effect
+            .opacity(opacity)
+            .offset(x: xOffset)  // IRREGULAR SCATTER (horizontal offset)
+            .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+        .frame(height: 120)
+    }
+}
+
+// MARK: - Recall Overlay Component
+struct RecallOverlay: View {
+    let goal: CompletedGoal
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Goal title
+            Text(goal.title)
+                .font(.system(size: 20, weight: .bold))
+                .foregroundColor(.white)
+
+            // AI Witness Text (The poetic reflection)
+            Text(goal.aiWitnessText)
+                .font(.custom("Georgia", size: 16))
+                .italic()
+                .foregroundColor(Color(hex: "CBA972").opacity(0.9))
+                .lineSpacing(6)
+                .padding(.vertical, 8)
+
+            // Timestamp
+            Text(goal.season)
+                .font(.system(size: 13))
+                .foregroundColor(.white.opacity(0.4))
+
+            Spacer()
+                .frame(height: 4)
+        }
+        .padding(28)
+        .frame(maxWidth: 340)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(hex: "14141E").opacity(0.95))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    goal.color.opacity(0.4),
+                                    goal.color.opacity(0.1)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1
+                        )
+                )
+        )
+        .shadow(color: goal.color.opacity(0.3), radius: 30, x: 0, y: 10)
+    }
+}
+
+// MARK: - Data Model for Completed Goals
+struct CompletedGoal: Identifiable {
+    let id = UUID()
+    let title: String
+    let aiWitnessText: String
+    let season: String
+    let position: CGPoint
+    let color: Color
 }
 
 // MARK: - ========== 工具扩展 ==========
