@@ -253,6 +253,23 @@ class AppState: ObservableObject {
         dayCompletions[todayKey] = completion
     }
 
+    func moveBubbleToTomorrow(_ bubble: Bubble) {
+        // Remove from today's list
+        if let index = bubbles.firstIndex(where: { $0.id == bubble.id }) {
+            bubbles.remove(at: index)
+        }
+
+        // Calculate tomorrow's date
+        let calendar = Calendar.current
+        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: Date()) else { return }
+        let tomorrowKey = dateFormatter.string(from: tomorrow)
+
+        // Add bubble to tomorrow's day completion
+        var completion = dayCompletions[tomorrowKey] ?? DayCompletion(date: tomorrow, completionType: .empty, bubbles: [])
+        completion.bubbles.append(bubble)
+        dayCompletions[tomorrowKey] = completion
+    }
+
     func addChatMessage(_ text: String, isUser: Bool) {
         chatMessages.append(ChatMessage(text: text, isUser: isUser))
     }
@@ -347,20 +364,20 @@ struct SoapBubbleView: View {
             Circle()
                 .fill(baseColors.first?.opacity(0.02 * intensity) ?? Color.white.opacity(0.02))
 
-            // Layer 2: 边缘光晕
+            // Layer 2: 边缘光晕 - 柔化处理呈现立体球形
             Circle()
                 .stroke(
                     LinearGradient(
                         colors: [
-                            Color.white.opacity(0.6 * intensity),
-                            Color.white.opacity(0.2 * intensity)
+                            Color.white.opacity(0.5 * intensity),
+                            Color.white.opacity(0.15 * intensity)
                         ],
                         startPoint: .top,
                         endPoint: .bottom
                     ),
-                    lineWidth: 2
+                    lineWidth: 3
                 )
-                .blur(radius: 3)
+                .blur(radius: 5)
 
             // Layer 3: 薄膜干涉（关键层 - 增强绚丽度）
             Circle()
@@ -848,6 +865,7 @@ struct HomeView: View {
     @State private var launchBubbleScale: CGFloat = 0
     @State private var showSnoozeHint = false
     @State private var snoozeHintText = ""
+    @State private var isDraggingBubble = false  // Track when user is dragging a bubble
 
     // Task input state
     @State private var showTaskInput = false
@@ -1005,22 +1023,42 @@ struct HomeView: View {
                     .background(Capsule().fill(.ultraThinMaterial))
                 }
             } else {
-                // Calendar button with soft glow halo
-                Button(action: { appState.openCalendar() }) {
-                    ZStack {
-                        // Soft glow halo
-                        Circle()
-                            .fill(Color.white.opacity(0.3))
-                            .frame(width: 50, height: 50)
-                            .blur(radius: 8)
+                // Calendar button with soft glow halo and drag hint
+                VStack(spacing: 8) {
+                    Button(action: { appState.openCalendar() }) {
+                        ZStack {
+                            // Soft glow halo - enhanced when dragging
+                            Circle()
+                                .fill(Color.white.opacity(isDraggingBubble ? 0.6 : 0.3))
+                                .frame(width: isDraggingBubble ? 60 : 50, height: isDraggingBubble ? 60 : 50)
+                                .blur(radius: isDraggingBubble ? 12 : 8)
+                                .animation(.easeInOut(duration: 0.3), value: isDraggingBubble)
 
-                        Image(systemName: "calendar")
-                            .font(.system(size: 20))
-                            .foregroundColor(Color(hex: "6B6B6B"))
-                            .frame(width: 40, height: 40)
-                            .background(Circle().fill(.ultraThinMaterial))
+                            Image(systemName: "calendar")
+                                .font(.system(size: 20))
+                                .foregroundColor(isDraggingBubble ? Color(hex: "CBA972") : Color(hex: "6B6B6B"))
+                                .frame(width: 40, height: 40)
+                                .background(Circle().fill(.ultraThinMaterial))
+                                .animation(.easeInOut(duration: 0.3), value: isDraggingBubble)
+                        }
+                    }
+
+                    // Hint text for drag-to-tomorrow feature - only visible when dragging
+                    if isDraggingBubble {
+                        Text("转为明日待办清单")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(Color(hex: "CBA972"))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill(.ultraThinMaterial)
+                                    .shadow(color: Color(hex: "CBA972").opacity(0.3), radius: 4, x: 0, y: 2)
+                            )
+                            .transition(.opacity.combined(with: .scale(scale: 0.8)))
                     }
                 }
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isDraggingBubble)
             }
 
             Spacer()
@@ -1340,10 +1378,17 @@ struct HomeView: View {
             bubbleScene.onBubbleFlung = { bubbleId in
                 snoozeBubble(bubbleId)
             }
+
+            bubbleScene.onDragStateChanged = { isDragging in
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    isDraggingBubble = isDragging
+                }
+            }
         } else {
             // Clear interaction handlers for read-only mode
             bubbleScene.onBubbleTapped = nil
             bubbleScene.onBubbleFlung = nil
+            bubbleScene.onDragStateChanged = nil
         }
     }
 
@@ -1365,9 +1410,15 @@ struct HomeView: View {
             bubbleScene.onBubbleFlung = { bubbleId in
                 snoozeBubble(bubbleId)
             }
+            bubbleScene.onDragStateChanged = { isDragging in
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    isDraggingBubble = isDragging
+                }
+            }
         } else {
             bubbleScene.onBubbleTapped = nil
             bubbleScene.onBubbleFlung = nil
+            bubbleScene.onDragStateChanged = nil
         }
     }
 
@@ -1441,12 +1492,19 @@ struct HomeView: View {
     private func snoozeBubble(_ bubbleId: UUID) {
         guard let bubble = appState.bubbles.first(where: { $0.id == bubbleId }) else { return }
 
-        snoozeHintText = "「\(bubble.text)」进入明日待办泡泡海"
+        snoozeHintText = "「\(bubble.text)」已转为明日待办"
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             showSnoozeHint = true
         }
 
-        appState.completeBubble(bubble)
+        // Remove bubble from scene with animation
+        bubbleScene.removeBubble(bubbleId, animated: true)
+
+        // Move bubble to tomorrow's bubble sea
+        appState.moveBubbleToTomorrow(bubble)
+
+        // Haptic feedback for successful transfer
+        SoundManager.hapticMedium()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             withAnimation {
@@ -1483,8 +1541,8 @@ class BubbleNode: SKNode {
     let bubbleText: String
     let bubbleType: Bubble.BubbleType
 
-    // Static mode for read-only/past bubbles (no physics, no animation)
-    let isStaticBubble: Bool
+    // Frozen mode for past bubbles (crystallized glass marble look)
+    let isFrozen: Bool
 
     // Store base color for particle effects
     var baseColor: UIColor = .white
@@ -1497,18 +1555,23 @@ class BubbleNode: SKNode {
         self.bubbleId = bubble.id
         self.bubbleText = bubble.text
         self.bubbleType = bubble.type
-        self.isStaticBubble = isStatic
+        self.isFrozen = isStatic
         super.init()
 
         let diameter = radius * 2
 
         if bubbleType == .core {
-            // CORE BUBBLE: Render SplashView bubble to texture
             self.baseColor = UIColor(Color(hex: "FFD700"))
-            let bubbleTexture = renderCoreBubbleTexture(size: diameter)
-            createBubbleSprite(texture: bubbleTexture, size: diameter)
+            if isFrozen {
+                // FROZEN CORE: Crystallized glass marble look
+                let bubbleTexture = renderFrozenCoreBubbleTexture(size: diameter)
+                createBubbleSprite(texture: bubbleTexture, size: diameter)
+            } else {
+                // ALIVE CORE: Airy soap bubble
+                let bubbleTexture = renderCoreBubbleTexture(size: diameter)
+                createBubbleSprite(texture: bubbleTexture, size: diameter)
+            }
         } else {
-            // CHORE BUBBLE: Render ChatView-style bubble to texture
             let hazyPalettes = [
                 ["FFFFFF", "FFB6C1", "CBA972"],  // Pink
                 ["FFFFFF", "B0E0E6", "CBA972"],  // Blue
@@ -1519,50 +1582,44 @@ class BubbleNode: SKNode {
             let chosenPalette = hazyPalettes.randomElement()!
             self.baseColor = UIColor(Color(hex: chosenPalette[1]))
 
-            let bubbleTexture = renderChoreBubbleTexture(size: diameter, colors: chosenPalette)
-            createBubbleSprite(texture: bubbleTexture, size: diameter)
+            if isFrozen {
+                // FROZEN CHORE: Solid matte bead
+                let bubbleTexture = renderFrozenChoreBubbleTexture(size: diameter, colors: chosenPalette)
+                createBubbleSprite(texture: bubbleTexture, size: diameter)
+            } else {
+                // ALIVE CHORE: Soft hazy bubble
+                let bubbleTexture = renderChoreBubbleTexture(size: diameter, colors: chosenPalette)
+                createBubbleSprite(texture: bubbleTexture, size: diameter)
+            }
         }
 
-        // Only add physics for dynamic (non-static) bubbles
-        if !isStatic {
+        // Only add physics for dynamic (non-frozen) bubbles
+        if !isFrozen {
             setupPhysicsBody(radius: radius)
         }
 
         addTextLabel(radius: radius)
-
-        // Only add breathing animation for dynamic bubbles
-        // Static bubbles are "crystallized" - frozen in time
-        if !isStatic {
-            addBreathingAnimation()
-        } else {
-            // Apply slight opacity reduction for crystallized effect
-            bubbleSprite.alpha = 0.85
-        }
     }
 
     required init?(coder aDecoder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    // MARK: - Snapshot Rendering
+    // MARK: - ALIVE Bubble Rendering (Transparent, Airy, Soap Bubble)
     private func renderCoreBubbleTexture(size: CGFloat) -> SKTexture? {
         if #available(iOS 16.0, *) {
-            // Use EXACT SoapBubbleView.splash configuration without stroke
             let bubbleView = SoapBubbleView.splash(size: size)
             return bubbleView.renderToSKTexture(size: CGSize(width: size, height: size))
         } else {
-            // Fallback for older iOS versions
             return renderCoreBubbleFallback(size: size)
         }
     }
 
     private func renderChoreBubbleTexture(size: CGFloat, colors: [String]) -> SKTexture? {
         if #available(iOS 16.0, *) {
-            // Create bubble with hazy gradient (ChatView style)
             let bubbleView = createChoreBubbleView(size: size, colorHexes: colors)
             return bubbleView.renderToSKTexture(size: CGSize(width: size, height: size))
         } else {
-            // Fallback for older iOS versions
             return renderChoreBubbleFallback(size: size, colors: colors)
         }
     }
@@ -1581,15 +1638,138 @@ class BubbleNode: SKNode {
                     endRadius: size * 0.5
                 )
             )
-            .shadow(color: .white.opacity(0.3), radius: 3, x: 0, y: 0)  // Soft glow instead of hard stroke
+            .shadow(color: .white.opacity(0.3), radius: 3, x: 0, y: 0)
             .frame(width: size, height: size)
+    }
+
+    // MARK: - FROZEN Bubble Rendering (Opaque, Solid, Glass Marble)
+    private func renderFrozenCoreBubbleTexture(size: CGFloat) -> SKTexture? {
+        if #available(iOS 16.0, *) {
+            let frozenView = createFrozenCoreBubbleView(size: size)
+            return frozenView.renderToSKTexture(size: CGSize(width: size, height: size))
+        } else {
+            return renderCoreBubbleFallback(size: size)
+        }
+    }
+
+    private func renderFrozenChoreBubbleTexture(size: CGFloat, colors: [String]) -> SKTexture? {
+        if #available(iOS 16.0, *) {
+            let frozenView = createFrozenChoreBubbleView(size: size, colorHexes: colors)
+            return frozenView.renderToSKTexture(size: CGSize(width: size, height: size))
+        } else {
+            return renderChoreBubbleFallback(size: size, colors: colors)
+        }
+    }
+
+    // Frozen Core: Crystallized rainbow glass marble - brighter colors, high opacity, soft edge
+    @ViewBuilder
+    private func createFrozenCoreBubbleView(size: CGFloat) -> some View {
+        ZStack {
+            // Base fill - brighter rainbow colors, still crystallized
+            Circle()
+                .fill(
+                    AngularGradient(
+                        colors: [
+                            // Brighter but still "settled" rainbow colors
+                            Color(hex: "E8C55A").opacity(0.80),  // Warm gold
+                            Color(hex: "E89AAE").opacity(0.75),  // Soft rose
+                            Color(hex: "B8A0D8").opacity(0.75),  // Light purple
+                            Color(hex: "8ECCE8").opacity(0.75),  // Sky cyan
+                            Color(hex: "90D8A8").opacity(0.75),  // Fresh mint
+                            Color(hex: "E8A890").opacity(0.75),  // Peach coral
+                            Color(hex: "E8C55A").opacity(0.80)   // Back to gold
+                        ],
+                        center: .center
+                    )
+                )
+
+            // Inner luminous fill for density with warmth
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.white.opacity(0.45),
+                            Color(hex: "E8C55A").opacity(0.4),
+                            Color(hex: "CBA972").opacity(0.3)
+                        ],
+                        center: UnitPoint(x: 0.35, y: 0.35),
+                        startRadius: 0,
+                        endRadius: size * 0.5
+                    )
+                )
+
+            // Soft shell edge - blurred for 3D glass effect
+            Circle()
+                .stroke(Color.white.opacity(0.7), lineWidth: 2.5)
+                .blur(radius: 1.5)
+
+            // Inner highlight for glass sphere effect
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.white.opacity(0.6),
+                            Color.clear
+                        ],
+                        center: UnitPoint(x: 0.3, y: 0.3),
+                        startRadius: 0,
+                        endRadius: size * 0.25
+                    )
+                )
+                .frame(width: size * 0.5, height: size * 0.5)
+                .offset(x: -size * 0.1, y: -size * 0.1)
+        }
+        .frame(width: size, height: size)
+        .shadow(color: Color(hex: "E8C55A").opacity(0.35), radius: 6, x: 0, y: 2)
+    }
+
+    // Frozen Chore: Solid matte bead - high opacity, minimal glow
+    @ViewBuilder
+    private func createFrozenChoreBubbleView(size: CGFloat, colorHexes: [String]) -> some View {
+        ZStack {
+            // Solid matte fill - high opacity
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color(hex: colorHexes[0]).opacity(0.85),
+                            Color(hex: colorHexes[1]).opacity(0.75),
+                            Color(hex: colorHexes[2]).opacity(0.65)
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: size * 0.5
+                    )
+                )
+
+            // Hard shell edge
+            Circle()
+                .stroke(Color.white.opacity(0.75), lineWidth: 2.5)
+
+            // Small highlight for bead effect
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.white.opacity(0.45),
+                            Color.clear
+                        ],
+                        center: UnitPoint(x: 0.3, y: 0.3),
+                        startRadius: 0,
+                        endRadius: size * 0.2
+                    )
+                )
+                .frame(width: size * 0.4, height: size * 0.4)
+                .offset(x: -size * 0.12, y: -size * 0.12)
+        }
+        .frame(width: size, height: size)
+        .shadow(color: Color(hex: colorHexes[1]).opacity(0.2), radius: 3, x: 0, y: 1)
     }
 
     // Fallback for iOS < 16
     private func renderCoreBubbleFallback(size: CGFloat) -> SKTexture? {
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
         let image = renderer.image { _ in
-            // Simple fallback gradient
             let colors = [
                 UIColor(Color(hex: "FFD700")),
                 UIColor(Color(hex: "FFA500")),
@@ -1632,14 +1812,16 @@ class BubbleNode: SKNode {
         self.addChild(sprite)
         self.bubbleSprite = sprite
 
-        // RESTORE ANIMATIONS (lost in snapshot)
-        // All bubbles now use breathing animation only
-        addBubblePulseAnimation(to: sprite)
+        // ONLY add breathing animation for ALIVE bubbles
+        // Frozen bubbles are completely static - no animation at all
+        if !isFrozen {
+            addBubblePulseAnimation(to: sprite)
+        }
+        // Frozen bubbles: no animation, no pulse, completely still
     }
 
-    // MARK: - Animation Restoration
+    // MARK: - Animation (ALIVE bubbles only)
     private func addBubblePulseAnimation(to sprite: SKSpriteNode) {
-        // Breathing effect (like SplashView)
         let scaleUp = SKAction.scale(to: 1.05, duration: 3.0)
         let scaleDown = SKAction.scale(to: 0.95, duration: 3.0)
         scaleUp.timingMode = .easeInEaseOut
@@ -1650,7 +1832,6 @@ class BubbleNode: SKNode {
     }
 
     private func addRotationAnimation(to sprite: SKSpriteNode) {
-        // Slow rotation to simulate angular gradient movement (like SplashView)
         let rotate = SKAction.rotate(byAngle: .pi * 2, duration: 12.0)
         sprite.run(SKAction.repeatForever(rotate), withKey: "rotate")
     }
@@ -1720,6 +1901,7 @@ class BubbleNode: SKNode {
 class BubbleScene: SKScene {
     var onBubbleTapped: ((UUID) -> Void)?
     var onBubbleFlung: ((UUID) -> Void)?
+    var onDragStateChanged: ((Bool) -> Void)?  // Notify when drag starts/ends
     var archivePosition: CGPoint = .zero
     var calendarPosition: CGPoint = .zero  // Left-top corner for snooze to tomorrow
 
@@ -1949,7 +2131,7 @@ class BubbleScene: SKScene {
         let touchedNodes = nodes(at: location)
         if let bubbleNode = touchedNodes.compactMap({ $0 as? BubbleNode }).first {
             // Skip static bubbles
-            guard !bubbleNode.isStaticBubble else { return }
+            guard !bubbleNode.isFrozen else { return }
 
             draggedBubble = bubbleNode
             dragStartPosition = location
@@ -1957,6 +2139,9 @@ class BubbleScene: SKScene {
 
             bubbleNode.physicsBody?.isDynamic = false
             SoundManager.hapticLight()
+
+            // Notify that dragging started
+            onDragStateChanged?(true)
         }
     }
 
@@ -2006,6 +2191,8 @@ class BubbleScene: SKScene {
             onBubbleTapped?(bubble.bubbleId)
         }
 
+        // Notify that dragging ended
+        onDragStateChanged?(false)
         draggedBubble = nil
     }
 
@@ -2013,6 +2200,8 @@ class BubbleScene: SKScene {
         if let bubble = draggedBubble {
             bubble.physicsBody?.isDynamic = true
         }
+        // Notify that dragging ended
+        onDragStateChanged?(false)
         draggedBubble = nil
     }
 }
@@ -2551,10 +2740,10 @@ struct CalendarDayCell: View {
                 pulseScale = 1.08
             }
 
-            // Outer glow ring
+            // Soft outer glow ring - blurred for 3D sphere effect
             Circle()
-                .stroke(Color.white.opacity(0.8), lineWidth: 2)
-                .blur(radius: 1)
+                .stroke(Color.white.opacity(0.6), lineWidth: 3)
+                .blur(radius: 4)
         }
         .shadow(color: Color(hex: "FFD700").opacity(0.5), radius: 20)
         .shadow(color: Color.white.opacity(0.4), radius: 30)
