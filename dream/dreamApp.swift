@@ -78,14 +78,53 @@ struct RootView: View {
 }
 
 // MARK: - ========== 状态管理器 ==========
+
+/// Temporal view mode for HomeView
+enum TemporalMode {
+    case past
+    case today
+    case future
+}
+
+/// Day completion type based on what bubbles were popped
+enum DayCompletionType {
+    case empty          // Nothing popped
+    case choreOnly      // Only chore bubbles popped
+    case coreCompleted  // At least one core bubble popped
+}
+
+/// Data for a specific day's completion status
+struct DayCompletion: Identifiable {
+    let id = UUID()
+    let date: Date
+    var completionType: DayCompletionType
+    var bubbles: [Bubble]  // Bubbles for that day
+}
+
 class AppState: ObservableObject {
     @Published var showSplash: Bool = true
     @Published var showCalendar: Bool = false
     @Published var showChat: Bool = false
     @Published var showArchive: Bool = false
 
+    // Calendar & temporal state
+    @Published var selectedDate: Date = Date()
+    @Published var currentTemporalMode: TemporalMode = .today
+    @Published var displayedMonth: Date = Date()  // For calendar navigation
+    @Published var isViewingDetailedDay: Bool = false  // For zoom transition
+
+    // Day completion data (keyed by date string "yyyy-MM-dd")
+    @Published var dayCompletions: [String: DayCompletion] = [:]
+
     @Published var bubbles: [Bubble] = []
     @Published var chatMessages: [ChatMessage] = []
+
+    private let calendar = Calendar.current
+    private let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
 
     init() {
         bubbles = [
@@ -99,11 +138,98 @@ class AppState: ObservableObject {
         chatMessages = [
             ChatMessage(text: "你好呀，今天想聊点什么？或者，有什么想要实现的小愿望吗？", isUser: false)
         ]
+
+        // Initialize sample completion data for demo
+        initializeSampleData()
+    }
+
+    private func initializeSampleData() {
+        let today = Date()
+
+        // Sample task texts for past days
+        let coreTasks = ["完成项目报告", "健身30分钟", "学习新技能", "写作练习", "冥想20分钟"]
+        let choreTasks = ["回复邮件", "买菜", "整理房间", "洗衣服", "倒垃圾", "做饭", "打电话", "缴费"]
+
+        // Generate sample data for past days in current month
+        for dayOffset in 1...10 {
+            if let pastDate = calendar.date(byAdding: .day, value: -dayOffset, to: today) {
+                let key = dateFormatter.string(from: pastDate)
+                let random = Double.random(in: 0...1)
+
+                var completionType: DayCompletionType
+                var dayBubbles: [Bubble] = []
+
+                if random < 0.2 {
+                    // Empty day - no bubbles
+                    completionType = .empty
+                } else if random < 0.5 {
+                    // Chore-only day - 2-4 chore bubbles
+                    completionType = .choreOnly
+                    let choreCount = Int.random(in: 2...4)
+                    for i in 0..<choreCount {
+                        let task = choreTasks[Int.random(in: 0..<choreTasks.count)]
+                        dayBubbles.append(Bubble(
+                            text: task,
+                            type: .small,
+                            position: CGPoint(
+                                x: 0.2 + Double.random(in: 0...0.6),
+                                y: 0.25 + Double(i) * 0.15 + Double.random(in: -0.05...0.05)
+                            )
+                        ))
+                    }
+                } else {
+                    // Core completed day - 1 core + 1-3 chores
+                    completionType = .coreCompleted
+                    let coreTask = coreTasks[Int.random(in: 0..<coreTasks.count)]
+                    dayBubbles.append(Bubble(
+                        text: coreTask,
+                        type: .core,
+                        position: CGPoint(x: 0.5, y: 0.35)
+                    ))
+
+                    let choreCount = Int.random(in: 1...3)
+                    for i in 0..<choreCount {
+                        let task = choreTasks[Int.random(in: 0..<choreTasks.count)]
+                        dayBubbles.append(Bubble(
+                            text: task,
+                            type: .small,
+                            position: CGPoint(
+                                x: 0.25 + Double(i) * 0.25,
+                                y: 0.55 + Double.random(in: -0.05...0.1)
+                            )
+                        ))
+                    }
+                }
+
+                dayCompletions[key] = DayCompletion(
+                    date: pastDate,
+                    completionType: completionType,
+                    bubbles: dayBubbles
+                )
+            }
+        }
+
+        // Add some AI-planned future tasks
+        for dayOffset in [2, 5, 7] {
+            if let futureDate = calendar.date(byAdding: .day, value: dayOffset, to: today) {
+                let key = dateFormatter.string(from: futureDate)
+                dayCompletions[key] = DayCompletion(
+                    date: futureDate,
+                    completionType: .empty,
+                    bubbles: [
+                        Bubble(text: "AI规划任务", type: .core, position: CGPoint(x: 0.5, y: 0.4))
+                    ]
+                )
+            }
+        }
     }
 
     func enterHome() { showSplash = false }
     func openCalendar() { showCalendar = true }
-    func closeCalendar() { showCalendar = false }
+    func closeCalendar() {
+        showCalendar = false
+        isViewingDetailedDay = false
+    }
     func openChat() { showChat = true }
     func closeChat() { showChat = false }
     func openArchive() { showArchive = true }
@@ -113,10 +239,73 @@ class AppState: ObservableObject {
         if let index = bubbles.firstIndex(where: { $0.id == bubble.id }) {
             bubbles.remove(at: index)
         }
+
+        // Update today's completion status
+        let todayKey = dateFormatter.string(from: Date())
+        var completion = dayCompletions[todayKey] ?? DayCompletion(date: Date(), completionType: .empty, bubbles: [])
+
+        if bubble.type == .core {
+            completion.completionType = .coreCompleted
+        } else if completion.completionType == .empty {
+            completion.completionType = .choreOnly
+        }
+
+        dayCompletions[todayKey] = completion
     }
 
     func addChatMessage(_ text: String, isUser: Bool) {
         chatMessages.append(ChatMessage(text: text, isUser: isUser))
+    }
+
+    // MARK: - Calendar Helpers
+
+    func dateKey(for date: Date) -> String {
+        return dateFormatter.string(from: date)
+    }
+
+    func getCompletionType(for date: Date) -> DayCompletionType {
+        let key = dateKey(for: date)
+        return dayCompletions[key]?.completionType ?? .empty
+    }
+
+    func getBubbles(for date: Date) -> [Bubble] {
+        let key = dateKey(for: date)
+        return dayCompletions[key]?.bubbles ?? []
+    }
+
+    func isToday(_ date: Date) -> Bool {
+        return calendar.isDateInToday(date)
+    }
+
+    func isPast(_ date: Date) -> Bool {
+        return date < calendar.startOfDay(for: Date())
+    }
+
+    func isFuture(_ date: Date) -> Bool {
+        return date > calendar.startOfDay(for: Date())
+    }
+
+    func selectDate(_ date: Date) {
+        selectedDate = date
+        if isToday(date) {
+            currentTemporalMode = .today
+        } else if isPast(date) {
+            currentTemporalMode = .past
+        } else {
+            currentTemporalMode = .future
+        }
+    }
+
+    func navigateToNextMonth() {
+        if let nextMonth = calendar.date(byAdding: .month, value: 1, to: displayedMonth) {
+            displayedMonth = nextMonth
+        }
+    }
+
+    func navigateToPreviousMonth() {
+        if let prevMonth = calendar.date(byAdding: .month, value: -1, to: displayedMonth) {
+            displayedMonth = prevMonth
+        }
     }
 }
 
@@ -419,7 +608,7 @@ struct SplashView: View {
     @State private var pulseAnimation = false
     @State private var showQuote = false
 
-    private let dailyMessage = "Light up the little things."
+    private let dailyMessage = "点亮微小的日常。"
     private let maxBubbleScale: CGFloat = 4.5
 
     var body: some View {
@@ -449,9 +638,9 @@ struct SplashView: View {
             VStack(spacing: 60) {
                 Spacer()
 
-                // App Name: Lumi
-                Text("Lumi")
-                    .font(.system(size: 48, weight: .light))
+                // App Name: 微光计划
+                Text("微光计划")
+                    .font(.system(size: 40, weight: .light))
                     .foregroundColor(Color(hex: "CBA972"))
                     .opacity(showQuote ? 1 : 0)
 
@@ -494,7 +683,7 @@ struct SplashView: View {
                     .padding(.horizontal, 40)
                 }
 
-                Text("Long press to enter")
+                Text("长按进入")
                     .font(.system(size: 14))
                     .foregroundColor(Color(hex: "6B6B6B").opacity(0.5))
                     .opacity(isLongPressing ? 0 : 1)
@@ -665,16 +854,103 @@ struct HomeView: View {
     @State private var taskInputText = ""
     @FocusState private var isTaskInputFocused: Bool
 
+    // Computed properties for temporal mode
+    private var isReadOnly: Bool {
+        appState.currentTemporalMode == .past
+    }
+
+    private var showLaunchpad: Bool {
+        // Show launchpad for Today and Future (can add tasks)
+        appState.currentTemporalMode != .past
+    }
+
+    private var isViewingNonToday: Bool {
+        appState.currentTemporalMode != .today && appState.isViewingDetailedDay
+    }
+
+    private var selectedDateString: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "M月d日"
+        formatter.locale = Locale(identifier: "zh_Hans")
+        return formatter.string(from: appState.selectedDate)
+    }
+
+    private var temporalModeLabel: String {
+        switch appState.currentTemporalMode {
+        case .past: return "回顾"
+        case .today: return "今天"
+        case .future: return "计划"
+        }
+    }
+
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                LinearGradient(
-                    colors: [Color(hex: "FFF9E6"), Color(hex: "FDFCF8")],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .ignoresSafeArea()
+                // Background changes based on temporal mode
+                backgroundView
 
+                VStack(spacing: 0) {
+                    // Header with navigation
+                    headerView
+
+                    BubbleSceneView(scene: bubbleScene)
+
+                    Spacer()
+                }
+
+                // Launchpad Button - Only show for Today and Future
+                if showLaunchpad {
+                    launchpadView
+                        .zIndex(100)
+                }
+
+                // AI Chat Button (bottom-right) - Only show for Today
+                if appState.currentTemporalMode == .today {
+                    aiChatButton
+                }
+
+                // Snooze hint
+                if showSnoozeHint {
+                    snoozeHintView
+                }
+
+                // Task Input Overlay
+                if showTaskInput {
+                    taskInputOverlay
+                        .zIndex(200)
+                }
+
+                // Read-only indicator for past dates
+                if isReadOnly {
+                    readOnlyIndicator
+                }
+            }
+            .onAppear {
+                setupScene(geometry: geometry)
+            }
+            .onChange(of: appState.currentTemporalMode) { _ in
+                // Reload bubbles when temporal mode changes
+                reloadBubblesForCurrentMode(geometry: geometry)
+            }
+            .onChange(of: appState.selectedDate) { _ in
+                reloadBubblesForCurrentMode(geometry: geometry)
+            }
+        }
+    }
+
+    // MARK: - Background View
+    private var backgroundView: some View {
+        ZStack {
+            // Base gradient - varies by temporal mode
+            LinearGradient(
+                colors: backgroundGradientColors,
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            // Breathing pulse - only for Today
+            if appState.currentTemporalMode == .today {
                 RadialGradient(
                     colors: [Color(hex: "FFF9E6").opacity(0.5), Color.clear],
                     center: .center,
@@ -684,283 +960,429 @@ struct HomeView: View {
                 .opacity(pulseAnimation ? 0.7 : 0.4)
                 .animation(.easeInOut(duration: 7).repeatForever(autoreverses: true), value: pulseAnimation)
                 .onAppear { pulseAnimation = true }
+            }
 
-                VStack(spacing: 0) {
-                    HStack {
-                        Button(action: { appState.openCalendar() }) {
-                            Image(systemName: "calendar")
-                                .font(.system(size: 20))
-                                .foregroundColor(Color(hex: "6B6B6B"))
-                                .frame(width: 40, height: 40)
-                                .background(Circle().fill(.ultraThinMaterial))
-                        }
+            // Past mode: subtle frost overlay
+            if appState.currentTemporalMode == .past {
+                Color.white.opacity(0.05)
+                    .ignoresSafeArea()
+            }
+        }
+    }
 
-                        Spacer()
+    private var backgroundGradientColors: [Color] {
+        switch appState.currentTemporalMode {
+        case .today:
+            return [Color(hex: "FFF9E6"), Color(hex: "FDFCF8")]
+        case .past:
+            // Slightly cooler/muted tones for "crystallized" past
+            return [Color(hex: "F5F3EE"), Color(hex: "EBE9E4")]
+        case .future:
+            // Slightly cooler/hopeful tones for future
+            return [Color(hex: "F8FAFF"), Color(hex: "F0F5FF")]
+        }
+    }
 
-                        Button(action: { appState.openArchive() }) {
-                            Image(systemName: "gearshape.fill")
-                                .font(.system(size: 20))
-                                .foregroundColor(Color(hex: "6B6B6B"))
-                                .frame(width: 40, height: 40)
-                                .background(Circle().fill(.ultraThinMaterial))
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 20)
-
-                    BubbleSceneView(scene: bubbleScene)
-
-                    Spacer()
-                }
-
-                // Launchpad Button - PLACED OUTSIDE VStack WITH HIGH Z-INDEX
-                VStack {
-                    Spacer()
-
-                    VStack(spacing: 12) {
-                        Circle()
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        Color.white.opacity(0.5),
-                                        Color(hex: "CBA972").opacity(0.3)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .background(Circle().fill(.ultraThinMaterial))
-                            .frame(width: 70, height: 70)
-                            .shadow(color: Color(hex: "CBA972").opacity(0.3), radius: 24, x: 0, y: 8)
-                            .overlay(
-                                Text("+")
-                                    .font(.system(size: 32, weight: .light))
-                                    .foregroundColor(Color(hex: "CBA972").opacity(0.8))
-                            )
-                            .scaleEffect(isLongPressingLaunch ? 0.9 : 1.0)
-                            .onLongPressGesture(minimumDuration: 0.5) {
-                                // Show task input when long press completes
-                                SoundManager.hapticMedium()
-                                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                                    showTaskInput = true
-                                    isTaskInputFocused = true
-                                }
-                            } onPressingChanged: { pressing in
-                                // Visual feedback during press
-                                withAnimation(.easeOut(duration: 0.2)) {
-                                    isLongPressingLaunch = pressing
-                                }
-                            }
-
-                        Text("长按吹出泡泡")
-                            .font(.system(size: 11))
-                            .foregroundColor(Color(hex: "6B6B6B").opacity(0.6))
-                            .opacity(isLongPressingLaunch ? 0 : 1)
-                    }
-                    .padding(.bottom, 30)
-                }
-                .zIndex(100)  // Ensure button is on top of SpriteKit view
-
-                // AI Chat Button (bottom-right) - Enhanced with wisdom entrance feel
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-
-                        Button(action: { appState.openChat() }) {
-                            ZStack {
-                                // Outer rotating light ring
-                                Circle()
-                                    .stroke(
-                                        AngularGradient(
-                                            colors: [
-                                                Color(hex: "FFD700").opacity(0.8),
-                                                Color(hex: "CBA972").opacity(0.6),
-                                                Color(hex: "FFB6C1").opacity(0.5),
-                                                Color(hex: "87CEEB").opacity(0.4),
-                                                Color(hex: "FFD700").opacity(0.8)
-                                            ],
-                                            center: .center
-                                        ),
-                                        lineWidth: 3
-                                    )
-                                    .frame(width: 70, height: 70)
-                                    .blur(radius: 2)
-                                    .rotationEffect(.degrees(archivePulse ? 360 : 0))
-                                    .animation(.linear(duration: 8).repeatForever(autoreverses: false), value: archivePulse)
-
-                                // Pulsing glow layers
-                                Circle()
-                                    .fill(
-                                        RadialGradient(
-                                            colors: [
-                                                Color(hex: "FFD700").opacity(0.5),
-                                                Color(hex: "CBA972").opacity(0.3),
-                                                Color.clear
-                                            ],
-                                            center: .center,
-                                            startRadius: 0,
-                                            endRadius: 35
-                                        )
-                                    )
-                                    .frame(width: 70, height: 70)
-                                    .scaleEffect(archivePulse ? 1.3 : 1.0)
-                                    .opacity(archivePulse ? 0.4 : 0.8)
-                                    .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: archivePulse)
-
-                                // Inner core button
-                                Circle()
-                                    .fill(
-                                        RadialGradient(
-                                            colors: [
-                                                Color(hex: "FFD700").opacity(0.7),
-                                                Color(hex: "CBA972").opacity(0.5)
-                                            ],
-                                            center: .center,
-                                            startRadius: 0,
-                                            endRadius: 25
-                                        )
-                                    )
-                                    .frame(width: 50, height: 50)
-                                    .shadow(color: Color(hex: "FFD700").opacity(0.6), radius: 15, x: 0, y: 0)
-                                    .shadow(color: Color(hex: "CBA972").opacity(0.4), radius: 25, x: 0, y: 0)
-
-                                // Sparkle icon with subtle scale
-                                Text("✨")
-                                    .font(.system(size: 22))
-                                    .scaleEffect(archivePulse ? 1.05 : 0.95)
-                                    .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: archivePulse)
-                            }
-                            .onAppear { archivePulse = true }
-                        }
-                        .padding(.trailing, 30)
-                        .padding(.bottom, 120)
-                    }
-                }
-
-                if showSnoozeHint {
-                    VStack {
-                        Spacer()
-                        Text(snoozeHintText)
+    // MARK: - Header View
+    private var headerView: some View {
+        HStack {
+            // Back button (when viewing non-today) or Calendar button
+            if isViewingNonToday {
+                Button(action: {
+                    // Return to today
+                    appState.selectDate(Date())
+                    appState.isViewingDetailedDay = false
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 16, weight: .medium))
+                        Text("返回今天")
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 12)
-                            .background(Capsule().fill(Color(hex: "6B6B6B").opacity(0.9)))
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                            .padding(.bottom, 100)
                     }
+                    .foregroundColor(Color(hex: "6B6B6B"))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(.ultraThinMaterial))
                 }
-
-                // Task Input Overlay
-                if showTaskInput {
+            } else {
+                // Calendar button with soft glow halo
+                Button(action: { appState.openCalendar() }) {
                     ZStack {
-                        // Semi-transparent background
-                        Color.black.opacity(0.3)
-                            .ignoresSafeArea()
-                            .onTapGesture {
-                                dismissTaskInput()
-                            }
+                        // Soft glow halo
+                        Circle()
+                            .fill(Color.white.opacity(0.3))
+                            .frame(width: 50, height: 50)
+                            .blur(radius: 8)
 
-                        // Input card
-                        VStack(spacing: 20) {
-                            Text("新建琐事")
-                                .font(.system(size: 20, weight: .semibold))
-                                .foregroundColor(Color(hex: "6B6B6B"))
-
-                            TextField("写下你的琐事...", text: $taskInputText)
-                                .focused($isTaskInputFocused)
-                                .font(.system(size: 16))
-                                .padding(16)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .fill(Color.white.opacity(0.9))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 12)
-                                                .stroke(Color(hex: "CBA972").opacity(0.3), lineWidth: 1)
-                                        )
-                                )
-                                .onSubmit {
-                                    createTaskBubble()
-                                }
-
-                            HStack(spacing: 12) {
-                                Button(action: {
-                                    dismissTaskInput()
-                                }) {
-                                    Text("取消")
-                                        .font(.system(size: 16, weight: .medium))
-                                        .foregroundColor(Color(hex: "6B6B6B"))
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 14)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 12)
-                                                .fill(Color.white.opacity(0.7))
-                                        )
-                                }
-
-                                Button(action: {
-                                    createTaskBubble()
-                                }) {
-                                    Text("创建")
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .foregroundColor(.white)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 14)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 12)
-                                                .fill(
-                                                    LinearGradient(
-                                                        colors: [
-                                                            Color(hex: "CBA972"),
-                                                            Color(hex: "CBA972").opacity(0.8)
-                                                        ],
-                                                        startPoint: .topLeading,
-                                                        endPoint: .bottomTrailing
-                                                    )
-                                                )
-                                        )
-                                }
-                                .disabled(taskInputText.isEmpty)
-                                .opacity(taskInputText.isEmpty ? 0.5 : 1.0)
-                            }
-                        }
-                        .padding(24)
-                        .background(
-                            RoundedRectangle(cornerRadius: 20)
-                                .fill(.ultraThinMaterial)
-                        )
-                        .padding(.horizontal, 40)
+                        Image(systemName: "calendar")
+                            .font(.system(size: 20))
+                            .foregroundColor(Color(hex: "6B6B6B"))
+                            .frame(width: 40, height: 40)
+                            .background(Circle().fill(.ultraThinMaterial))
                     }
-                    .zIndex(200)
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
             }
-            .onAppear {
-                bubbleScene.size = geometry.size
-                bubbleScene.archivePosition = CGPoint(
-                    x: geometry.size.width - 55,
-                    y: geometry.size.height - 140
-                )
 
-                // Set calendar position (top-left corner, accounting for safe area and button size)
-                // SpriteKit coordinates: origin at bottom-left, so we need to convert from top
-                bubbleScene.calendarPosition = CGPoint(
-                    x: 30,  // 20pt padding + 20pt icon center
-                    y: geometry.size.height - 50  // Convert from top: total height - (20pt padding + 30pt to center)
-                )
+            Spacer()
 
-                for bubble in appState.bubbles {
-                    bubbleScene.addBubble(bubble: bubble)
+            // Date label when viewing specific date
+            if isViewingNonToday {
+                VStack(spacing: 2) {
+                    Text(selectedDateString)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color(hex: "6B6B6B"))
+                    Text(temporalModeLabel)
+                        .font(.system(size: 11))
+                        .foregroundColor(temporalModeLabelColor)
+                }
+            }
+
+            Spacer()
+
+            // Archive button with soft glow halo (sparkles icon)
+            Button(action: { appState.openArchive() }) {
+                ZStack {
+                    // Soft glow halo
+                    Circle()
+                        .fill(Color.white.opacity(0.3))
+                        .frame(width: 50, height: 50)
+                        .blur(radius: 8)
+
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 20))
+                        .foregroundColor(Color(hex: "6B6B6B"))
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(.ultraThinMaterial))
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+    }
+
+    private var temporalModeLabelColor: Color {
+        switch appState.currentTemporalMode {
+        case .past: return Color(hex: "8B7355")
+        case .today: return Color(hex: "CBA972")
+        case .future: return Color(hex: "87CEEB")
+        }
+    }
+
+    // MARK: - Launchpad View
+    private var launchpadView: some View {
+        VStack {
+            Spacer()
+
+            VStack(spacing: 12) {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.5),
+                                Color(hex: "CBA972").opacity(0.3)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .background(Circle().fill(.ultraThinMaterial))
+                    .frame(width: 70, height: 70)
+                    .shadow(color: Color(hex: "CBA972").opacity(0.3), radius: 24, x: 0, y: 8)
+                    .overlay(
+                        Text("+")
+                            .font(.system(size: 32, weight: .light))
+                            .foregroundColor(Color(hex: "CBA972").opacity(0.8))
+                    )
+                    .scaleEffect(isLongPressingLaunch ? 0.9 : 1.0)
+                    .onLongPressGesture(minimumDuration: 0.5) {
+                        // Show task input when long press completes
+                        SoundManager.hapticMedium()
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                            showTaskInput = true
+                            isTaskInputFocused = true
+                        }
+                    } onPressingChanged: { pressing in
+                        // Visual feedback during press
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            isLongPressingLaunch = pressing
+                        }
+                    }
+
+                Text("长按创建待办清单")
+                    .font(.system(size: 11))
+                    .foregroundColor(Color(hex: "6B6B6B").opacity(0.6))
+                    .opacity(isLongPressingLaunch ? 0 : 1)
+            }
+            .padding(.bottom, 30)
+        }
+    }
+
+    // MARK: - AI Chat Button
+    private var aiChatButton: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+
+                Button(action: { appState.openChat() }) {
+                    ZStack {
+                        // Outer rotating light ring
+                        Circle()
+                            .stroke(
+                                AngularGradient(
+                                    colors: [
+                                        Color(hex: "FFD700").opacity(0.8),
+                                        Color(hex: "CBA972").opacity(0.6),
+                                        Color(hex: "FFB6C1").opacity(0.5),
+                                        Color(hex: "87CEEB").opacity(0.4),
+                                        Color(hex: "FFD700").opacity(0.8)
+                                    ],
+                                    center: .center
+                                ),
+                                lineWidth: 3
+                            )
+                            .frame(width: 70, height: 70)
+                            .blur(radius: 2)
+                            .rotationEffect(.degrees(archivePulse ? 360 : 0))
+                            .animation(.linear(duration: 8).repeatForever(autoreverses: false), value: archivePulse)
+
+                        // Pulsing glow layers
+                        Circle()
+                            .fill(
+                                RadialGradient(
+                                    colors: [
+                                        Color(hex: "FFD700").opacity(0.5),
+                                        Color(hex: "CBA972").opacity(0.3),
+                                        Color.clear
+                                    ],
+                                    center: .center,
+                                    startRadius: 0,
+                                    endRadius: 35
+                                )
+                            )
+                            .frame(width: 70, height: 70)
+                            .scaleEffect(archivePulse ? 1.3 : 1.0)
+                            .opacity(archivePulse ? 0.4 : 0.8)
+                            .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: archivePulse)
+
+                        // Inner core button
+                        Circle()
+                            .fill(
+                                RadialGradient(
+                                    colors: [
+                                        Color(hex: "FFD700").opacity(0.7),
+                                        Color(hex: "CBA972").opacity(0.5)
+                                    ],
+                                    center: .center,
+                                    startRadius: 0,
+                                    endRadius: 25
+                                )
+                            )
+                            .frame(width: 50, height: 50)
+                            .shadow(color: Color(hex: "FFD700").opacity(0.6), radius: 15, x: 0, y: 0)
+                            .shadow(color: Color(hex: "CBA972").opacity(0.4), radius: 25, x: 0, y: 0)
+
+                        // Sparkle icon with subtle scale
+                        Text("✨")
+                            .font(.system(size: 22))
+                            .scaleEffect(archivePulse ? 1.05 : 0.95)
+                            .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: archivePulse)
+                    }
+                    .onAppear { archivePulse = true }
+                }
+                .padding(.trailing, 30)
+                .padding(.bottom, 120)
+            }
+        }
+    }
+
+    // MARK: - Snooze Hint View
+    private var snoozeHintView: some View {
+        VStack {
+            Spacer()
+            Text(snoozeHintText)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.white)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(Capsule().fill(Color(hex: "6B6B6B").opacity(0.9)))
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .padding(.bottom, 100)
+        }
+    }
+
+    // MARK: - Read-Only Indicator
+    private var readOnlyIndicator: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 12))
+                Text("只读模式 - 过去的光球已凝结")
+                    .font(.system(size: 12))
+            }
+            .foregroundColor(Color(hex: "8B7355").opacity(0.7))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Capsule().fill(Color.white.opacity(0.8)))
+            .padding(.bottom, 30)
+        }
+    }
+
+    // MARK: - Task Input Overlay
+    private var taskInputOverlay: some View {
+        ZStack {
+            // Semi-transparent background
+            Color.black.opacity(0.3)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    dismissTaskInput()
                 }
 
-                bubbleScene.onBubbleTapped = { bubbleId in
-                    popBubble(bubbleId)
-                }
+            // Input card
+            VStack(spacing: 20) {
+                Text(appState.currentTemporalMode == .future ? "添加未来计划" : "新建琐事")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(Color(hex: "6B6B6B"))
 
-                bubbleScene.onBubbleFlung = { bubbleId in
-                    snoozeBubble(bubbleId)
+                TextField("写下你的任务...", text: $taskInputText)
+                    .focused($isTaskInputFocused)
+                    .font(.system(size: 16))
+                    .padding(16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white.opacity(0.9))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Color(hex: "CBA972").opacity(0.3), lineWidth: 1)
+                            )
+                    )
+                    .onSubmit {
+                        createTaskBubble()
+                    }
+
+                HStack(spacing: 12) {
+                    Button(action: {
+                        dismissTaskInput()
+                    }) {
+                        Text("取消")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(Color(hex: "6B6B6B"))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.white.opacity(0.7))
+                            )
+                    }
+
+                    Button(action: {
+                        createTaskBubble()
+                    }) {
+                        Text("创建")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                Color(hex: "CBA972"),
+                                                Color(hex: "CBA972").opacity(0.8)
+                                            ],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                            )
+                    }
+                    .disabled(taskInputText.isEmpty)
+                    .opacity(taskInputText.isEmpty ? 0.5 : 1.0)
                 }
+            }
+            .padding(24)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(.ultraThinMaterial)
+            )
+            .padding(.horizontal, 40)
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+    }
+
+    // MARK: - Scene Setup
+    private func setupScene(geometry: GeometryProxy) {
+        bubbleScene.size = geometry.size
+        bubbleScene.archivePosition = CGPoint(
+            x: geometry.size.width - 55,
+            y: geometry.size.height - 140
+        )
+
+        bubbleScene.calendarPosition = CGPoint(
+            x: 30,
+            y: geometry.size.height - 50
+        )
+
+        // Set read-only mode based on temporal state
+        bubbleScene.isReadOnly = isReadOnly
+
+        // Load appropriate bubbles
+        loadBubblesForCurrentMode()
+
+        // Only set up interactions for non-read-only mode
+        if !isReadOnly {
+            bubbleScene.onBubbleTapped = { bubbleId in
+                popBubble(bubbleId)
+            }
+
+            bubbleScene.onBubbleFlung = { bubbleId in
+                snoozeBubble(bubbleId)
+            }
+        } else {
+            // Clear interaction handlers for read-only mode
+            bubbleScene.onBubbleTapped = nil
+            bubbleScene.onBubbleFlung = nil
+        }
+    }
+
+    private func reloadBubblesForCurrentMode(geometry: GeometryProxy) {
+        // Clear existing bubbles
+        bubbleScene.clearAllBubbles()
+
+        // Update read-only mode
+        bubbleScene.isReadOnly = isReadOnly
+
+        // Load bubbles for current mode
+        loadBubblesForCurrentMode()
+
+        // Update interaction handlers
+        if !isReadOnly {
+            bubbleScene.onBubbleTapped = { bubbleId in
+                popBubble(bubbleId)
+            }
+            bubbleScene.onBubbleFlung = { bubbleId in
+                snoozeBubble(bubbleId)
+            }
+        } else {
+            bubbleScene.onBubbleTapped = nil
+            bubbleScene.onBubbleFlung = nil
+        }
+    }
+
+    private func loadBubblesForCurrentMode() {
+        switch appState.currentTemporalMode {
+        case .today:
+            // Load today's bubbles from appState
+            for bubble in appState.bubbles {
+                bubbleScene.addBubble(bubble: bubble)
+            }
+        case .past, .future:
+            // Load bubbles for the selected date
+            let dateBubbles = appState.getBubbles(for: appState.selectedDate)
+            for bubble in dateBubbles {
+                bubbleScene.addBubble(bubble: bubble, isStatic: isReadOnly)
             }
         }
     }
@@ -984,18 +1406,29 @@ struct HomeView: View {
         let newBubble = Bubble(
             text: taskInputText,
             type: .small,
-            position: CGPoint(x: 0.5, y: 0.5)  // Center position
+            position: CGPoint(x: 0.5, y: 0.5)
         )
 
-        // Add to app state
-        appState.bubbles.append(newBubble)
+        if appState.currentTemporalMode == .today {
+            // Add to today's bubbles
+            appState.bubbles.append(newBubble)
+        } else if appState.currentTemporalMode == .future {
+            // Add to future date's planned bubbles
+            let key = appState.dateKey(for: appState.selectedDate)
+            var completion = appState.dayCompletions[key] ?? DayCompletion(
+                date: appState.selectedDate,
+                completionType: .empty,
+                bubbles: []
+            )
+            completion.bubbles.append(newBubble)
+            appState.dayCompletions[key] = completion
+        }
 
-        // Add to SpriteKit scene at center with slight randomization
+        // Add to SpriteKit scene
         let centerX = bubbleScene.size.width / 2 + CGFloat.random(in: -30...30)
         let centerY = bubbleScene.size.height / 2 + CGFloat.random(in: -30...30)
         bubbleScene.addBubble(bubble: newBubble, at: CGPoint(x: centerX, y: centerY))
 
-        // Dismiss input
         dismissTaskInput()
     }
 
@@ -1050,6 +1483,9 @@ class BubbleNode: SKNode {
     let bubbleText: String
     let bubbleType: Bubble.BubbleType
 
+    // Static mode for read-only/past bubbles (no physics, no animation)
+    let isStaticBubble: Bool
+
     // Store base color for particle effects
     var baseColor: UIColor = .white
 
@@ -1057,10 +1493,11 @@ class BubbleNode: SKNode {
     private var bubbleSprite: SKSpriteNode!
     private var textLabel: SKLabelNode!
 
-    init(bubble: Bubble, radius: CGFloat) {
+    init(bubble: Bubble, radius: CGFloat, isStatic: Bool = false) {
         self.bubbleId = bubble.id
         self.bubbleText = bubble.text
         self.bubbleType = bubble.type
+        self.isStaticBubble = isStatic
         super.init()
 
         let diameter = radius * 2
@@ -1086,9 +1523,21 @@ class BubbleNode: SKNode {
             createBubbleSprite(texture: bubbleTexture, size: diameter)
         }
 
-        setupPhysicsBody(radius: radius)
+        // Only add physics for dynamic (non-static) bubbles
+        if !isStatic {
+            setupPhysicsBody(radius: radius)
+        }
+
         addTextLabel(radius: radius)
-        addBreathingAnimation()
+
+        // Only add breathing animation for dynamic bubbles
+        // Static bubbles are "crystallized" - frozen in time
+        if !isStatic {
+            addBreathingAnimation()
+        } else {
+            // Apply slight opacity reduction for crystallized effect
+            bubbleSprite.alpha = 0.85
+        }
     }
 
     required init?(coder aDecoder: NSCoder) {
@@ -1274,6 +1723,9 @@ class BubbleScene: SKScene {
     var archivePosition: CGPoint = .zero
     var calendarPosition: CGPoint = .zero  // Left-top corner for snooze to tomorrow
 
+    // Read-only mode for past dates (bubbles cannot be interacted with)
+    var isReadOnly: Bool = false
+
     private var bubbleNodes: [UUID: BubbleNode] = [:]
     private var draggedBubble: BubbleNode?
     private var dragStartPosition: CGPoint = .zero
@@ -1356,11 +1808,11 @@ class BubbleScene: SKScene {
         addChild(bottomField)
     }
 
-    func addBubble(bubble: Bubble, at position: CGPoint? = nil) {
+    func addBubble(bubble: Bubble, at position: CGPoint? = nil, isStatic: Bool = false) {
         guard bubbleNodes[bubble.id] == nil else { return }
 
         let radius: CGFloat = bubble.type == .core ? 80 : 45
-        let bubbleNode = BubbleNode(bubble: bubble, radius: radius)
+        let bubbleNode = BubbleNode(bubble: bubble, radius: radius, isStatic: isStatic || isReadOnly)
 
         if let pos = position {
             bubbleNode.position = pos
@@ -1374,7 +1826,18 @@ class BubbleScene: SKScene {
 
         bubbleNodes[bubble.id] = bubbleNode
         addChild(bubbleNode)
-        addRepulsionField(to: bubbleNode, radius: radius)
+
+        // Only add repulsion field for dynamic bubbles
+        if !isStatic && !isReadOnly {
+            addRepulsionField(to: bubbleNode, radius: radius)
+        }
+    }
+
+    func clearAllBubbles() {
+        for (_, node) in bubbleNodes {
+            node.removeFromParent()
+        }
+        bubbleNodes.removeAll()
     }
 
     func removeBubble(_ bubbleId: UUID, animated: Bool = true) {
@@ -1478,11 +1941,16 @@ class BubbleScene: SKScene {
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        // Ignore touches in read-only mode
+        guard !isReadOnly else { return }
         guard let touch = touches.first else { return }
         let location = touch.location(in: self)
 
         let touchedNodes = nodes(at: location)
         if let bubbleNode = touchedNodes.compactMap({ $0 as? BubbleNode }).first {
+            // Skip static bubbles
+            guard !bubbleNode.isStaticBubble else { return }
+
             draggedBubble = bubbleNode
             dragStartPosition = location
             dragStartTime = Date().timeIntervalSince1970
@@ -1810,22 +2278,36 @@ struct MouthView: View {
 }
 
 // MARK: - ========== 4. 日历（升级版）==========
+
+/// Calendar day data structure
+struct CalendarDay: Identifiable {
+    let id = UUID()
+    let date: Date
+    let dayNumber: Int
+    let isCurrentMonth: Bool
+    let isToday: Bool
+    let isPast: Bool
+    let isFuture: Bool
+    let completionType: DayCompletionType
+    let hasBubbles: Bool
+}
+
 struct CalendarView: View {
     @EnvironmentObject var appState: AppState
-    let columns = Array(repeating: GridItem(.flexible()), count: 7)
-    let today = 1
-    @State private var days: [DayData] = []
+    @Namespace private var calendarAnimation
 
-    struct DayData: Identifiable {
-        let id = UUID()
-        let day: Int
-        let isCompleted: Bool
-        let isToday: Bool
-        let isFuture: Bool
-    }
+    let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 7)
+    let weekdays = ["日", "一", "二", "三", "四", "五", "六"]
+
+    @State private var calendarDays: [CalendarDay] = []
+    @State private var dragOffset: CGFloat = 0
+    @State private var selectedDayForTransition: CalendarDay?
+
+    private let calendar = Calendar.current
 
     var body: some View {
         ZStack {
+            // Background
             LinearGradient(
                 colors: [Color(hex: "2C2C3E"), Color(hex: "1C1C2E")],
                 startPoint: .top,
@@ -1835,180 +2317,435 @@ struct CalendarView: View {
 
             StarField()
 
-            VStack {
+            VStack(spacing: 0) {
+                // Drag handle
                 Capsule()
                     .fill(Color.white.opacity(0.3))
                     .frame(width: 40, height: 5)
-                    .padding(.top, 10)
+                    .padding(.top, 12)
+                    .padding(.bottom, 16)
 
-                HStack {
-                    Button(action: { appState.closeCalendar() }) {
-                        Image(systemName: "chevron.left")
-                            .foregroundColor(.white)
-                            .frame(width: 40, height: 40)
-                            .background(Circle().fill(.white.opacity(0.1)))
+                // Header: Year Month (center aligned)
+                Text(monthYearString)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(Color(hex: "CBA972"))
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, 20)
+
+                // Weekdays row
+                HStack(spacing: 0) {
+                    ForEach(weekdays, id: \.self) { day in
+                        Text(day)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.5))
+                            .frame(maxWidth: .infinity)
                     }
-                    Spacer()
-                    Text("2026 年 1 月")
-                        .foregroundColor(Color(hex: "CBA972"))
-                    Spacer()
-                    Color.clear.frame(width: 40)
                 }
-                .padding()
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
 
-                Text("18 天")
-                    .font(.system(size: 48, weight: .bold))
-                    .foregroundStyle(LinearGradient(colors: [Color(hex: "CBA972"), .white], startPoint: .top, endPoint: .bottom))
-                    .padding()
-
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 20) {
-                        ForEach(days) { day in
-                            DayRingView(day: day)
-                                .onTapGesture {
-                                    handleDayTap(day)
-                                }
+                // Calendar grid
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(calendarDays) { day in
+                        if day.isCurrentMonth {
+                            CalendarDayCell(
+                                day: day,
+                                namespace: calendarAnimation,
+                                isSelected: selectedDayForTransition?.id == day.id
+                            )
+                            .onTapGesture {
+                                handleDayTap(day)
+                            }
+                        } else {
+                            // Empty placeholder for days outside current month
+                            Color.clear
+                                .frame(width: 50, height: 50)
                         }
                     }
-                    .padding()
                 }
+                .padding(.horizontal, 16)
+                .offset(x: dragOffset)
+
+                Spacer()
+
+                // Bottom Quote with Typewriter Effect
+                CalendarQuoteView()
+                    .padding(.bottom, 16)
+
+                // Back button hint
+                HStack {
+                    Image(systemName: "chevron.down")
+                        .foregroundColor(Color.white.opacity(0.4))
+                    Text("下滑返回今天")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color.white.opacity(0.4))
+                }
+                .padding(.bottom, 30)
             }
         }
         .onAppear {
-            generateDays()
+            generateCalendarDays()
+        }
+        .onChange(of: appState.displayedMonth) { _ in
+            withAnimation(.easeInOut(duration: 0.3)) {
+                generateCalendarDays()
+            }
         }
         .gesture(
             DragGesture()
+                .onChanged { value in
+                    // Horizontal swipe for month navigation
+                    if abs(value.translation.width) > abs(value.translation.height) {
+                        dragOffset = value.translation.width * 0.3
+                    }
+                }
                 .onEnded { value in
-                    if value.translation.height > 100 {
-                        appState.closeCalendar()
+                    // Swipe left = next month
+                    if value.translation.width < -80 {
+                        SoundManager.hapticLight()
+                        appState.navigateToNextMonth()
+                    }
+                    // Swipe right = previous month
+                    else if value.translation.width > 80 {
+                        SoundManager.hapticLight()
+                        appState.navigateToPreviousMonth()
+                    }
+                    // Swipe down = close and return to Today
+                    else if value.translation.height > 100 {
+                        returnToToday()
+                    }
+
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        dragOffset = 0
                     }
                 }
         )
     }
 
-    private func generateDays() {
-        days = (1...31).map { day in
-            let isToday = day == today
-            let isFuture = day > today
-            let isCompleted = day < today && Double.random(in: 0...1) > 0.3
-
-            return DayData(
-                day: day,
-                isCompleted: isCompleted,
-                isToday: isToday,
-                isFuture: isFuture
-            )
-        }
+    private func returnToToday() {
+        // Always return to Today's Bubble Sea
+        appState.selectDate(Date())
+        appState.isViewingDetailedDay = false
+        appState.closeCalendar()
     }
 
-    private func handleDayTap(_ day: DayData) {
-        // Allow clicking today, future dates, and completed past dates
-        guard day.isToday || day.isFuture || (day.isCompleted && !day.isFuture) else {
-            SoundManager.hapticLight()
+    private var monthYearString: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy年 M月"
+        formatter.locale = Locale(identifier: "zh_Hans")
+        return formatter.string(from: appState.displayedMonth)
+    }
+
+    private func generateCalendarDays() {
+        let month = appState.displayedMonth
+        guard let monthInterval = calendar.dateInterval(of: .month, for: month),
+              let firstWeek = calendar.dateInterval(of: .weekOfMonth, for: monthInterval.start) else {
             return
         }
 
+        var days: [CalendarDay] = []
+        var currentDate = firstWeek.start
+
+        // Generate 6 weeks of days (42 days max)
+        for _ in 0..<42 {
+            let dayNumber = calendar.component(.day, from: currentDate)
+            let isCurrentMonth = calendar.isDate(currentDate, equalTo: month, toGranularity: .month)
+
+            let day = CalendarDay(
+                date: currentDate,
+                dayNumber: dayNumber,
+                isCurrentMonth: isCurrentMonth,
+                isToday: appState.isToday(currentDate),
+                isPast: appState.isPast(currentDate),
+                isFuture: appState.isFuture(currentDate),
+                completionType: appState.getCompletionType(for: currentDate),
+                hasBubbles: !appState.getBubbles(for: currentDate).isEmpty
+            )
+
+            days.append(day)
+
+            guard let nextDay = calendar.date(byAdding: .day, value: 1, to: currentDate) else { break }
+            currentDate = nextDay
+
+            // Stop if we've passed the current month and filled a full week
+            if !isCurrentMonth && calendar.component(.weekday, from: currentDate) == calendar.firstWeekday {
+                break
+            }
+        }
+
+        calendarDays = days
+    }
+
+    private func handleDayTap(_ day: CalendarDay) {
         SoundManager.hapticMedium()
 
-        withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {}
+        // Set the selected date
+        appState.selectDate(day.date)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        // Trigger zoom transition
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+            selectedDayForTransition = day
+            appState.isViewingDetailedDay = true
+        }
+
+        // Close calendar after transition
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             appState.closeCalendar()
         }
     }
 }
 
-struct DayRingView: View {
-    let day: CalendarView.DayData
+// MARK: - Calendar Day Cell
+struct CalendarDayCell: View {
+    let day: CalendarDay
+    let namespace: Namespace.ID
+    let isSelected: Bool
+
     @State private var pulseScale: CGFloat = 1.0
+    @State private var rotationAngle: Double = 0
 
     var body: some View {
         ZStack {
             if day.isToday {
-                ZStack {
-                    SoapBubbleView(
-                        size: 60,
-                        baseColors: [
-                            Color(hex: "FFD700"),
-                            Color(hex: "FFB6C1"),
-                            Color(hex: "87CEEB")
-                        ],
-                        intensity: 1.2
-                    )
-                    .scaleEffect(pulseScale)
-                    .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: pulseScale)
-                    .onAppear { pulseScale = 1.08 }
-
-                    Circle()
-                        .stroke(Color.white.opacity(0.8), lineWidth: 2)
-                        .blur(radius: 1)
-                }
-                .shadow(color: Color.white.opacity(0.6), radius: 25)
-
-            } else if day.isFuture {
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [
-                                Color(hex: "ADD8E6").opacity(0.05),
-                                Color.clear
-                            ],
-                            center: .center,
-                            startRadius: 0,
-                            endRadius: 30
-                        )
-                    )
-                    .overlay(
-                        Circle()
-                            .strokeBorder(
-                                style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])
-                            )
-                            .foregroundColor(Color(hex: "ADD8E6").opacity(0.25))
-                            .blur(radius: 1.5)
-                    )
-                    .opacity(day.day <= 4 ? 0.6 : 0.25)
-
-            } else if day.isCompleted {
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [
-                                Color(hex: "8B7355").opacity(0.5),
-                                Color(hex: "8B7355").opacity(0.2),
-                                Color.clear
-                            ],
-                            center: .center,
-                            startRadius: 0,
-                            endRadius: 30
-                        )
-                    )
-                    .overlay(
-                        Circle()
-                            .stroke(Color(hex: "8B7355").opacity(0.5), lineWidth: 1.5)
-                    )
-                    .shadow(color: Color(hex: "8B7355").opacity(0.3), radius: 12)
-
+                // Today: Full Rainbow Breathing Orb (Gold Standard)
+                todayView
+            } else if day.isPast {
+                // Past: Crystallized based on completion type
+                pastDayView
             } else {
-                Circle()
-                    .fill(Color.white.opacity(0.03))
-                    .overlay(
-                        Circle()
-                            .stroke(Color.white.opacity(0.15), lineWidth: 1)
-                    )
-                    .opacity(0.3)
+                // Future: Static or empty ring
+                futureDayView
             }
 
-            Text("\(day.day)")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(
-                    day.isFuture ? Color(hex: "ADD8E6").opacity(0.4) :
-                    day.isToday ? .white :
-                    day.isCompleted ? Color(hex: "8B7355").opacity(0.9) :
-                    .white.opacity(0.25)
-                )
+            // Day number
+            Text("\(day.dayNumber)")
+                .font(.system(size: 14, weight: day.isToday ? .bold : .semibold))
+                .foregroundColor(dayNumberColor)
         }
-        .frame(width: 60, height: 60)
+        .frame(width: 50, height: 50)
+        .matchedGeometryEffect(id: day.id, in: namespace, isSource: !isSelected)
+        .scaleEffect(isSelected ? 8 : 1)
+        .opacity(isSelected ? 0 : 1)
+    }
+
+    // MARK: - Today View (Rainbow Breathing - The Gold Standard)
+    private var todayView: some View {
+        ZStack {
+            // Full Rainbow SoapBubbleView with splash colors
+            SoapBubbleView(
+                size: 50,
+                baseColors: [
+                    Color(hex: "FFD700"), // Gold
+                    Color(hex: "FF6B9D"), // Rose pink
+                    Color(hex: "C77DFF"), // Bright purple
+                    Color(hex: "4CC9F0"), // Cyan blue
+                    Color(hex: "7FE3A0"), // Emerald green
+                    Color(hex: "FF9770"), // Coral orange
+                    Color(hex: "FFE66D")  // Bright yellow
+                ],
+                intensity: 3.2
+            )
+            .scaleEffect(pulseScale)
+            .animation(.easeInOut(duration: 3).repeatForever(autoreverses: true), value: pulseScale)
+            .onAppear {
+                pulseScale = 1.08
+            }
+
+            // Outer glow ring
+            Circle()
+                .stroke(Color.white.opacity(0.8), lineWidth: 2)
+                .blur(radius: 1)
+        }
+        .shadow(color: Color(hex: "FFD700").opacity(0.5), radius: 20)
+        .shadow(color: Color.white.opacity(0.4), radius: 30)
+    }
+
+    // MARK: - Past Day View (Crystallized)
+    private var pastDayView: some View {
+        Group {
+            switch day.completionType {
+            case .coreCompleted:
+                // High Light: Rainbow - AGED (reduced saturation/brightness, frozen)
+                ZStack {
+                    // Aged rainbow colors - desaturated and slightly dimmer
+                    Circle()
+                        .fill(
+                            AngularGradient(
+                                colors: [
+                                    Color(hex: "D4B84A"),  // Aged gold
+                                    Color(hex: "D4829A"),  // Muted pink
+                                    Color(hex: "A882CC"),  // Soft purple
+                                    Color(hex: "7AB8CC"),  // Muted cyan
+                                    Color(hex: "8AC9A0"),  // Soft green
+                                    Color(hex: "CC9080"),  // Muted coral
+                                    Color(hex: "D4B84A")   // Back to aged gold
+                                ],
+                                center: .center
+                            )
+                        )
+                        .opacity(0.55)  // Reduced from 0.7
+
+                    // Inner glow - softer
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [
+                                    Color.white.opacity(0.4),
+                                    Color.white.opacity(0.15),
+                                    Color.clear
+                                ],
+                                center: UnitPoint(x: 0.3, y: 0.3),
+                                startRadius: 0,
+                                endRadius: 25
+                            )
+                        )
+
+                    // Edge highlight - softer
+                    Circle()
+                        .stroke(Color.white.opacity(0.35), lineWidth: 1.5)
+                }
+                .shadow(color: Color(hex: "D4B84A").opacity(0.25), radius: 10)
+
+            case .choreOnly:
+                // Small Win: Center glow with THICK GOLD RING
+                ZStack {
+                    // Center glow
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [
+                                    Color(hex: "CBA972").opacity(0.6),
+                                    Color(hex: "8B7355").opacity(0.35),
+                                    Color.clear
+                                ],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: 22
+                            )
+                        )
+
+                    // Thick Gold Ring - "Small Wins" indicator
+                    Circle()
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    Color(hex: "FFD700").opacity(0.8),
+                                    Color(hex: "CBA972").opacity(0.6),
+                                    Color(hex: "FFD700").opacity(0.8)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 3
+                        )
+                }
+                .shadow(color: Color(hex: "FFD700").opacity(0.35), radius: 10)
+
+            case .empty:
+                // Empty: Ring only
+                Circle()
+                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                    .background(Circle().fill(Color.white.opacity(0.02)))
+            }
+        }
+    }
+
+    // MARK: - Future Day View
+    private var futureDayView: some View {
+        Group {
+            if day.hasBubbles {
+                // Has AI-planned tasks: Show static bubble
+                ZStack {
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [
+                                    Color(hex: "87CEEB").opacity(0.2),
+                                    Color(hex: "ADD8E6").opacity(0.1),
+                                    Color.clear
+                                ],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: 25
+                            )
+                        )
+
+                    Circle()
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    Color(hex: "87CEEB").opacity(0.4),
+                                    Color(hex: "ADD8E6").opacity(0.2)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1.5
+                        )
+
+                    // Small indicator dot for AI task
+                    Circle()
+                        .fill(Color(hex: "4CC9F0").opacity(0.6))
+                        .frame(width: 6, height: 6)
+                        .offset(x: 15, y: -15)
+                }
+            } else {
+                // No tasks: Empty faint ring
+                Circle()
+                    .strokeBorder(
+                        style: StrokeStyle(lineWidth: 1, dash: [3, 3])
+                    )
+                    .foregroundColor(Color.white.opacity(0.15))
+            }
+        }
+    }
+
+    private var dayNumberColor: Color {
+        if day.isToday {
+            return .white
+        } else if day.isPast {
+            switch day.completionType {
+            case .coreCompleted:
+                return Color(hex: "FFD700").opacity(0.9)
+            case .choreOnly:
+                return Color(hex: "CBA972").opacity(0.8)
+            case .empty:
+                return Color.white.opacity(0.3)
+            }
+        } else {
+            return day.hasBubbles
+                ? Color(hex: "87CEEB").opacity(0.7)
+                : Color.white.opacity(0.3)
+        }
+    }
+}
+
+// MARK: - Calendar Quote View (Typewriter Effect)
+struct CalendarQuoteView: View {
+    let quote = "看见每一步的微光。"
+    @State private var displayedText: String = ""
+    @State private var isAnimating: Bool = false
+
+    var body: some View {
+        Text(displayedText)
+            .font(.system(size: 15, weight: .regular))
+            .foregroundColor(Color(hex: "CBA972").opacity(0.8))
+            .multilineTextAlignment(.center)
+            .onAppear {
+                startTypewriterAnimation()
+            }
+    }
+
+    private func startTypewriterAnimation() {
+        guard !isAnimating else { return }
+        isAnimating = true
+        displayedText = ""
+
+        for (index, character) in quote.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.12) {
+                displayedText.append(character)
+            }
+        }
     }
 }
 
@@ -2183,10 +2920,9 @@ struct ArchiveView: View {
 
                     Spacer()
 
-                    Text("光之回响")
-                        .font(.custom("Georgia", size: 16))
-                        .italic()
-                        .foregroundColor(Color(hex: "CBA972").opacity(0.8))
+                    Text("光尘")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(Color(hex: "CBA972"))
 
                     Spacer()
 
