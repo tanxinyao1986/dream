@@ -96,3 +96,9 @@ iOSInjectionProject/
 
 # macOS
 .DS_Store
+
+# API Keys and Secrets
+dream/Secrets.swift
+
+# Backup files
+*.backup_*

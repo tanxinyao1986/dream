@@ -58,11 +58,7 @@ struct RootView: View {
                     .zIndex(10)
             }
 
-            if appState.showChat {
-                ChatView()
-                    .transition(.move(edge: .bottom))
-                    .zIndex(20)
-            }
+            // ChatView is now presented via .fullScreenCover on HomeView
 
             if appState.showArchive {
                 ArchiveView()
@@ -71,7 +67,6 @@ struct RootView: View {
             }
         }
         .animation(.spring(response: 0.5, dampingFraction: 0.8), value: appState.showCalendar)
-        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: appState.showChat)
         .animation(.spring(response: 0.5, dampingFraction: 0.8), value: appState.showArchive)
         .animation(.easeInOut(duration: 0.8), value: appState.showSplash)
     }
@@ -953,6 +948,10 @@ struct HomeView: View {
             .onChange(of: appState.selectedDate) { _ in
                 reloadBubblesForCurrentMode(geometry: geometry)
             }
+            .fullScreenCover(isPresented: $appState.showChat) {
+                ChatView()
+                    .environmentObject(appState)
+            }
         }
     }
 
@@ -1155,7 +1154,7 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - AI Chat Button
+    // MARK: - AI Chat Button (Lumi Pet Avatar)
     private var aiChatButton: some View {
         VStack {
             Spacer()
@@ -1163,73 +1162,10 @@ struct HomeView: View {
                 Spacer()
 
                 Button(action: { appState.openChat() }) {
-                    ZStack {
-                        // Outer rotating light ring
-                        Circle()
-                            .stroke(
-                                AngularGradient(
-                                    colors: [
-                                        Color(hex: "FFD700").opacity(0.8),
-                                        Color(hex: "CBA972").opacity(0.6),
-                                        Color(hex: "FFB6C1").opacity(0.5),
-                                        Color(hex: "87CEEB").opacity(0.4),
-                                        Color(hex: "FFD700").opacity(0.8)
-                                    ],
-                                    center: .center
-                                ),
-                                lineWidth: 3
-                            )
-                            .frame(width: 70, height: 70)
-                            .blur(radius: 2)
-                            .rotationEffect(.degrees(archivePulse ? 360 : 0))
-                            .animation(.linear(duration: 8).repeatForever(autoreverses: false), value: archivePulse)
-
-                        // Pulsing glow layers
-                        Circle()
-                            .fill(
-                                RadialGradient(
-                                    colors: [
-                                        Color(hex: "FFD700").opacity(0.5),
-                                        Color(hex: "CBA972").opacity(0.3),
-                                        Color.clear
-                                    ],
-                                    center: .center,
-                                    startRadius: 0,
-                                    endRadius: 35
-                                )
-                            )
-                            .frame(width: 70, height: 70)
-                            .scaleEffect(archivePulse ? 1.3 : 1.0)
-                            .opacity(archivePulse ? 0.4 : 0.8)
-                            .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: archivePulse)
-
-                        // Inner core button
-                        Circle()
-                            .fill(
-                                RadialGradient(
-                                    colors: [
-                                        Color(hex: "FFD700").opacity(0.7),
-                                        Color(hex: "CBA972").opacity(0.5)
-                                    ],
-                                    center: .center,
-                                    startRadius: 0,
-                                    endRadius: 25
-                                )
-                            )
-                            .frame(width: 50, height: 50)
-                            .shadow(color: Color(hex: "FFD700").opacity(0.6), radius: 15, x: 0, y: 0)
-                            .shadow(color: Color(hex: "CBA972").opacity(0.4), radius: 25, x: 0, y: 0)
-
-                        // Sparkle icon with subtle scale
-                        Text("✨")
-                            .font(.system(size: 22))
-                            .scaleEffect(archivePulse ? 1.05 : 0.95)
-                            .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: archivePulse)
-                    }
-                    .onAppear { archivePulse = true }
+                    LumiPetAvatar()
                 }
-                .padding(.trailing, 30)
-                .padding(.bottom, 120)
+                .padding(.trailing, 24)
+                .padding(.bottom, 110)
             }
         }
     }
@@ -2226,96 +2162,634 @@ struct BubbleSceneView: UIViewRepresentable {
 // MARK: - ========== 3. AI 对话（保留原版）==========
 struct ChatView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.dismiss) private var dismiss
     @State private var inputText = ""
     @State private var isThinking = false
+    @State private var dragOffset: CGFloat = 0
+    @State private var isKeyboardVisible = false
+    @FocusState private var isInputFocused: Bool
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.3)
-                .ignoresSafeArea()
-                .onTapGesture {
-                    appState.closeChat()
-                }
+            // Background - warm beige, extends to edges
+            LinearGradient(
+                colors: [Color(hex: "FFF9E6"), Color(hex: "FDFCF8")],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                Capsule()
-                    .fill(Color.gray.opacity(0.3))
-                    .frame(width: 40, height: 5)
-                    .padding(.top, 10)
+                // MARK: - Navigation Header
+                HStack {
+                    // Empty space for balance
+                    Color.clear.frame(width: 50, height: 44)
 
-                LinearGradient(colors: [Color(hex: "FFF9E6"), Color(hex: "FDFCF8")], startPoint: .top, endPoint: .bottom)
-                    .overlay(
-                        VStack {
-                            // Enhanced AI Bubble with animated face
-                            AIBubbleAvatar(isThinking: isThinking)
-                                .frame(width: 160, height: 160)
-                                .padding(.top, 20)
+                    Spacer()
 
-                            ScrollView {
-                                VStack(spacing: 12) {
-                                    ForEach(appState.chatMessages) { msg in
-                                        HStack {
-                                            if msg.isUser { Spacer() }
-                                            Text(msg.text)
-                                                .padding(12)
-                                                .background(RoundedRectangle(cornerRadius: 18).fill(msg.isUser ? Color.white.opacity(0.6) : Color(hex: "ADD8E6").opacity(0.3)))
-                                            if !msg.isUser { Spacer() }
-                                        }
-                                    }
-                                }
-                                .padding()
+                    // Title
+                    Text("Lumi")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(Color(hex: "5C5C5C"))
+
+                    Spacer()
+
+                    // Done button - standard iOS style
+                    Button(action: dismissChat) {
+                        Text("完成")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(Color(hex: "5C5C5C"))
+                    }
+                    .frame(width: 50, height: 44)
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .background(Color(hex: "FFF9E6").opacity(0.95))
+
+                Divider()
+                    .background(Color(hex: "E0DCD4"))
+
+                // MARK: - Message List
+                ScrollViewReader { scrollProxy in
+                    ScrollView {
+                        LazyVStack(spacing: 16) {
+                            ForEach(appState.chatMessages) { message in
+                                ChatMessageRow(message: message)
+                                    .id(message.id)
                             }
 
-                            HStack {
-                                TextField("说说你的想法...", text: $inputText)
-                                    .padding(12)
-                                    .background(Capsule().fill(.white.opacity(0.7)))
-
-                                Button(action: sendMessage) {
-                                    Image(systemName: "arrow.up")
-                                        .foregroundColor(.white)
-                                        .frame(width: 45, height: 45)
-                                        .background(Circle().fill(Color(hex: "CBA972").opacity(0.6)))
-                                }
+                            // Typing Indicator
+                            if isThinking {
+                                TypingIndicatorRow()
+                                    .id("typing")
                             }
-                            .padding()
                         }
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                    }
+                    .scrollDismissesKeyboard(.interactively)
+                    .onChange(of: appState.chatMessages.count) { _ in
+                        scrollToBottom(proxy: scrollProxy)
+                    }
+                    .onChange(of: isThinking) { _ in
+                        scrollToBottom(proxy: scrollProxy)
+                    }
+                    .onChange(of: isKeyboardVisible) { visible in
+                        if visible {
+                            scrollToBottom(proxy: scrollProxy)
+                        }
+                    }
+                }
+
+                // MARK: - Input Bar
+                VStack(spacing: 0) {
+                    Divider()
+                        .background(Color(hex: "E0DCD4"))
+
+                    HStack(spacing: 12) {
+                        TextField("说说你的想法...", text: $inputText)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 20)
+                                    .fill(Color.white.opacity(0.8))
+                            )
+                            .focused($isInputFocused)
+
+                        Button(action: sendMessage) {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(.white)
+                                .frame(width: 36, height: 36)
+                                .background(
+                                    Circle()
+                                        .fill(inputText.isEmpty ? Color(hex: "CBA972").opacity(0.4) : Color(hex: "CBA972"))
+                                )
+                        }
+                        .disabled(inputText.isEmpty)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 34) // Safe area bottom padding
+                    .background(Color(hex: "FFF9E6").opacity(0.95))
+                }
             }
         }
+        .offset(y: dragOffset)
         .gesture(
-            DragGesture()
+            isKeyboardVisible ? nil : DragGesture()
+                .onChanged { value in
+                    if value.translation.height > 0 {
+                        dragOffset = value.translation.height * 0.5
+                    }
+                }
                 .onEnded { value in
                     if value.translation.height > 100 {
-                        appState.closeChat()
+                        dismissChat()
+                    } else {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            dragOffset = 0
+                        }
                     }
                 }
         )
+        .onAppear {
+            setupKeyboardObservers()
+        }
+        .onDisappear {
+            removeKeyboardObservers()
+        }
     }
 
-    func sendMessage() {
-        guard !inputText.isEmpty else { return }
-        appState.addChatMessage(inputText, isUser: true)
-        inputText = ""
+    private func scrollToBottom(proxy: ScrollViewProxy) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            if isThinking {
+                proxy.scrollTo("typing", anchor: .bottom)
+            } else if let lastMessage = appState.chatMessages.last {
+                proxy.scrollTo(lastMessage.id, anchor: .bottom)
+            }
+        }
+    }
 
-        // Show thinking animation
+    private func dismissChat() {
+        isInputFocused = false
+        withAnimation(.easeOut(duration: 0.2)) {
+            dragOffset = UIScreen.main.bounds.height
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            dismiss()
+            appState.closeChat()
+        }
+    }
+
+    private func sendMessage() {
+        guard !inputText.isEmpty else { return }
+        let messageText = inputText
+        inputText = ""
+        appState.addChatMessage(messageText, isUser: true)
+
+        // Show thinking indicator
         isThinking = true
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            let responses = ["这是一个很棒的想法！", "我们可以从小步开始。", "今天有点累也没关系。"]
-            appState.addChatMessage(responses.randomElement()!, isUser: false)
-            isThinking = false
+        // Send to AI API
+        Task {
+            do {
+                let response = try await ChatService.shared.sendMessage(
+                    userText: messageText,
+                    phase: .companion, // Default to companion mode
+                    context: "" // Add context here if needed
+                )
+
+                await MainActor.run {
+                    isThinking = false
+                    // Use displayText to show clean response without JSON blocks
+                    appState.addChatMessage(response.displayText, isUser: false)
+
+                    // Handle extracted JSON if present
+                    if response.hasJSON {
+                        handleAIResponse(response)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isThinking = false
+                    // Show error message or fallback
+                    let errorMessage = "抱歉，我暂时无法回应。请稍后再试。"
+                    appState.addChatMessage(errorMessage, isUser: false)
+                    print("ChatService error: \(error.localizedDescription)")
+                }
+            }
         }
+    }
+
+    /// Handle structured JSON responses from AI
+    private func handleAIResponse(_ response: ChatResponse) {
+        // Handle different JSON response types
+        if let action = response.action {
+            switch action {
+            case "reschedule":
+                // Handle bubble reschedule
+                print("Reschedule action detected")
+                // TODO: Implement reschedule logic
+            default:
+                break
+            }
+        }
+
+        if let bubbles = response.bubbles {
+            // Handle new bubbles from planning
+            print("Received \(bubbles.count) bubbles from AI")
+            // TODO: Implement bubble creation logic
+        }
+
+        if let crystal = response.crystal {
+            // Handle crystal creation
+            print("Received crystal data: \(crystal)")
+            // TODO: Implement crystal creation logic
+        }
+    }
+
+    private func setupKeyboardObservers() {
+        NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillShowNotification, object: nil, queue: .main) { _ in
+            isKeyboardVisible = true
+        }
+        NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { _ in
+            isKeyboardVisible = false
+        }
+    }
+
+    private func removeKeyboardObservers() {
+        NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+}
+
+// MARK: - Chat Message Row
+struct ChatMessageRow: View {
+    let message: ChatMessage
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            if message.isUser {
+                Spacer(minLength: 60)
+            } else {
+                // AI Avatar
+                LumiMiniAvatar(isThinking: false, size: 36)
+            }
+
+            // Message Bubble
+            Text(message.text)
+                .font(.system(size: 15))
+                .foregroundColor(message.isUser ? .white : Color(hex: "3C3C3C"))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(message.isUser ? Color(hex: "5C5C5C") : Color.white.opacity(0.9))
+                )
+
+            if message.isUser {
+                // User doesn't need avatar
+            } else {
+                Spacer(minLength: 60)
+            }
+        }
+    }
+}
+
+// MARK: - Typing Indicator Row
+struct TypingIndicatorRow: View {
+    @State private var dotAnimation = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            // Pulsing Avatar when thinking
+            LumiMiniAvatar(isThinking: true, size: 36)
+
+            // Typing dots bubble
+            HStack(spacing: 4) {
+                ForEach(0..<3) { index in
+                    Circle()
+                        .fill(Color(hex: "8B8B8B"))
+                        .frame(width: 8, height: 8)
+                        .scaleEffect(dotAnimation ? 1.0 : 0.5)
+                        .animation(
+                            .easeInOut(duration: 0.5)
+                            .repeatForever(autoreverses: true)
+                            .delay(Double(index) * 0.15),
+                            value: dotAnimation
+                        )
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(Color.white.opacity(0.9))
+            )
+            .onAppear { dotAnimation = true }
+
+            Spacer(minLength: 60)
+        }
+    }
+}
+
+// MARK: - Lumi Mini Avatar (Personified Light Ball)
+struct LumiMiniAvatar: View {
+    let isThinking: Bool
+    let size: CGFloat
+
+    @State private var breatheScale: CGFloat = 1.0
+    @State private var blinkAnimation = false
+
+    private var eyeSize: CGFloat { size * 0.12 }
+    private var eyeSpacing: CGFloat { size * 0.25 }
+    private var pupilSize: CGFloat { size * 0.08 }
+
+    var body: some View {
+        ZStack {
+            // Outer glow
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color(hex: "FFD700").opacity(isThinking ? 0.5 : 0.3),
+                            Color(hex: "CBA972").opacity(0.2),
+                            Color.clear
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: size * 0.6
+                    )
+                )
+                .frame(width: size * 1.3, height: size * 1.3)
+                .scaleEffect(breatheScale)
+
+            // Main bubble body
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            .white.opacity(0.95),
+                            Color(hex: "ADD8E6").opacity(0.5),
+                            Color(hex: "CBA972").opacity(0.35)
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: size * 0.5
+                    )
+                )
+                .frame(width: size, height: size)
+                .scaleEffect(breatheScale)
+                .shadow(color: Color(hex: "CBA972").opacity(0.3), radius: 4, x: 0, y: 2)
+
+            // Face - Eyes
+            HStack(spacing: eyeSpacing) {
+                MiniEyeView(isBlinking: blinkAnimation, eyeSize: eyeSize, pupilSize: pupilSize)
+                MiniEyeView(isBlinking: blinkAnimation, eyeSize: eyeSize, pupilSize: pupilSize)
+            }
+            .offset(y: -size * 0.05)
+
+            // Subtle smile - centered
+            SmilePath(width: size * 0.25, curveHeight: size * 0.08)
+                .stroke(Color(hex: "CBA972").opacity(0.6), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                .frame(width: size * 0.25, height: size * 0.1)
+                .offset(y: size * 0.15)
+        }
+        .frame(width: size, height: size)
+        .onAppear {
+            startBreathing()
+            startBlinking()
+        }
+        .onChange(of: isThinking) { thinking in
+            updateBreathingSpeed(thinking: thinking)
+        }
+    }
+
+    private func startBreathing() {
+        withAnimation(.easeInOut(duration: isThinking ? 0.6 : 2.0).repeatForever(autoreverses: true)) {
+            breatheScale = isThinking ? 1.08 : 1.04
+        }
+    }
+
+    private func updateBreathingSpeed(thinking: Bool) {
+        withAnimation(.easeInOut(duration: thinking ? 0.6 : 2.0).repeatForever(autoreverses: true)) {
+            breatheScale = thinking ? 1.08 : 1.04
+        }
+    }
+
+    private func startBlinking() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double.random(in: 2...4)) {
+            withAnimation(.easeInOut(duration: 0.1)) {
+                blinkAnimation = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.easeInOut(duration: 0.1)) {
+                    blinkAnimation = false
+                }
+                startBlinking()
+            }
+        }
+    }
+}
+
+// MARK: - Mini Eye View
+struct MiniEyeView: View {
+    let isBlinking: Bool
+    let eyeSize: CGFloat
+    let pupilSize: CGFloat
+
+    var body: some View {
+        ZStack {
+            // Eye white
+            Capsule()
+                .fill(Color.white.opacity(0.95))
+                .frame(width: eyeSize, height: isBlinking ? eyeSize * 0.2 : eyeSize * 1.4)
+                .shadow(color: Color(hex: "ADD8E6").opacity(0.3), radius: 1)
+
+            // Pupil
+            if !isBlinking {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [Color(hex: "4682B4"), Color(hex: "1E3A5F")],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: pupilSize
+                        )
+                    )
+                    .frame(width: pupilSize, height: pupilSize)
+
+                // Sparkle
+                Circle()
+                    .fill(Color.white.opacity(0.9))
+                    .frame(width: pupilSize * 0.35, height: pupilSize * 0.35)
+                    .offset(x: -pupilSize * 0.2, y: -pupilSize * 0.2)
+            }
+        }
+        .animation(.easeInOut(duration: 0.1), value: isBlinking)
+    }
+}
+
+// MARK: - Smile Path Shape (Centered)
+struct SmilePath: Shape {
+    let width: CGFloat
+    let curveHeight: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let centerX = rect.midX
+        let centerY = rect.midY
+        path.move(to: CGPoint(x: centerX - width/2, y: centerY))
+        path.addQuadCurve(
+            to: CGPoint(x: centerX + width/2, y: centerY),
+            control: CGPoint(x: centerX, y: centerY + curveHeight)
+        )
+        return path
+    }
+}
+
+// MARK: - Lumi Pet Avatar (Home Button - Larger Animated Avatar)
+struct LumiPetAvatar: View {
+    @State private var breatheScale: CGFloat = 1.0
+    @State private var blinkAnimation = false
+    @State private var floatOffset: CGFloat = 0
+
+    private let size: CGFloat = 56
+
+    var body: some View {
+        ZStack {
+            // Outer breathing glow
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color(hex: "FFD700").opacity(0.4),
+                            Color(hex: "CBA972").opacity(0.25),
+                            Color.clear
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: size * 0.7
+                    )
+                )
+                .frame(width: size * 1.5, height: size * 1.5)
+                .scaleEffect(breatheScale)
+
+            // Main bubble body with subtle iridescence
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            .white.opacity(0.95),
+                            Color(hex: "ADD8E6").opacity(0.55),
+                            Color(hex: "CBA972").opacity(0.4)
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: size * 0.5
+                    )
+                )
+                .frame(width: size, height: size)
+                .scaleEffect(breatheScale)
+                .shadow(color: Color(hex: "FFD700").opacity(0.5), radius: 12, x: 0, y: 4)
+                .shadow(color: Color(hex: "CBA972").opacity(0.3), radius: 20, x: 0, y: 6)
+
+            // Highlight shine
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.6), Color.clear],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: size * 0.8, height: size * 0.8)
+                .offset(x: -size * 0.1, y: -size * 0.1)
+                .blur(radius: 4)
+
+            // Face - Eyes
+            HStack(spacing: size * 0.22) {
+                PetEyeView(isBlinking: blinkAnimation, size: size)
+                PetEyeView(isBlinking: blinkAnimation, size: size)
+            }
+            .offset(y: -size * 0.03)
+
+            // Happy smile - centered
+            SmilePath(width: size * 0.28, curveHeight: size * 0.1)
+                .stroke(Color(hex: "CBA972").opacity(0.7), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .frame(width: size * 0.28, height: size * 0.12)
+            .offset(y: size * 0.18)
+        }
+        .offset(y: floatOffset)
+        .onAppear {
+            startBreathing()
+            startBlinking()
+            startFloating()
+        }
+    }
+
+    private func startBreathing() {
+        withAnimation(.easeInOut(duration: 2.5).repeatForever(autoreverses: true)) {
+            breatheScale = 1.06
+        }
+    }
+
+    private func startFloating() {
+        withAnimation(.easeInOut(duration: 3.0).repeatForever(autoreverses: true)) {
+            floatOffset = -4
+        }
+    }
+
+    private func startBlinking() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double.random(in: 2.5...4.5)) {
+            withAnimation(.easeInOut(duration: 0.12)) {
+                blinkAnimation = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                withAnimation(.easeInOut(duration: 0.12)) {
+                    blinkAnimation = false
+                }
+                startBlinking()
+            }
+        }
+    }
+}
+
+// MARK: - Pet Eye View (for Home Button Avatar)
+struct PetEyeView: View {
+    let isBlinking: Bool
+    let size: CGFloat
+
+    private var eyeWidth: CGFloat { size * 0.13 }
+    private var eyeHeight: CGFloat { size * 0.18 }
+    private var pupilSize: CGFloat { size * 0.09 }
+
+    var body: some View {
+        ZStack {
+            // Eye white
+            Capsule()
+                .fill(Color.white.opacity(0.95))
+                .frame(width: eyeWidth, height: isBlinking ? eyeWidth * 0.25 : eyeHeight)
+                .shadow(color: Color(hex: "ADD8E6").opacity(0.4), radius: 2)
+
+            // Pupil
+            if !isBlinking {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [Color(hex: "4682B4"), Color(hex: "1E3A5F")],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: pupilSize
+                        )
+                    )
+                    .frame(width: pupilSize, height: pupilSize)
+
+                // Sparkle highlight
+                Circle()
+                    .fill(Color.white.opacity(0.9))
+                    .frame(width: pupilSize * 0.4, height: pupilSize * 0.4)
+                    .offset(x: -pupilSize * 0.2, y: -pupilSize * 0.2)
+            }
+        }
+        .animation(.easeInOut(duration: 0.12), value: isBlinking)
     }
 }
 
 // MARK: - ========== AI Bubble Avatar Component ==========
 struct AIBubbleAvatar: View {
     let isThinking: Bool
+    let isSpeaking: Bool
+
     @State private var breatheScale: CGFloat = 1.0
     @State private var blinkAnimation = false
     @State private var mouthAnimation = false
+    @State private var trembleOffset: CGSize = .zero
+    @State private var brightnessBoost: Double = 0
+
+    // Timer for speaking vibration
+    @State private var speakingTimer: Timer?
 
     var body: some View {
         ZStack {
@@ -2334,23 +2808,23 @@ struct AIBubbleAvatar: View {
                     )
                 )
                 .scaleEffect(breatheScale)
-                .animation(.easeInOut(duration: 2.5).repeatForever(autoreverses: true), value: breatheScale)
+                .brightness(brightnessBoost)
 
-            // Outer glow for wisdom feel
+            // Outer glow for wisdom feel - brighter when thinking
             Circle()
                 .stroke(
                     LinearGradient(
                         colors: [
-                            Color(hex: "FFD700").opacity(0.4),
-                            Color(hex: "ADD8E6").opacity(0.3),
+                            Color(hex: "FFD700").opacity(isThinking ? 0.7 : 0.4),
+                            Color(hex: "ADD8E6").opacity(isThinking ? 0.5 : 0.3),
                             Color.clear
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
-                    lineWidth: 3
+                    lineWidth: isThinking ? 4 : 3
                 )
-                .blur(radius: 4)
+                .blur(radius: isThinking ? 6 : 4)
 
             // Face elements
             VStack(spacing: 15) {
@@ -2365,16 +2839,66 @@ struct AIBubbleAvatar: View {
                 .padding(.top, 10)
 
                 // Mouth
-                MouthView(isThinking: isThinking, animation: mouthAnimation)
+                MouthView(isThinking: isThinking, isSpeaking: isSpeaking, animation: mouthAnimation)
                     .padding(.top, 5)
             }
         }
+        .offset(trembleOffset)
         .onAppear {
             breatheScale = 1.05
-            // Random blink animation
+            startBreathing()
             startBlinking()
-            // Mouth animation
             mouthAnimation = true
+        }
+        .onChange(of: isThinking) { thinking in
+            updateBreathingAnimation(thinking: thinking)
+        }
+        .onChange(of: isSpeaking) { speaking in
+            updateSpeakingAnimation(speaking: speaking)
+        }
+    }
+
+    private func startBreathing() {
+        // Normal slow breathing
+        withAnimation(.easeInOut(duration: 2.5).repeatForever(autoreverses: true)) {
+            breatheScale = 1.05
+        }
+    }
+
+    private func updateBreathingAnimation(thinking: Bool) {
+        if thinking {
+            // Faster breathing when thinking
+            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                breatheScale = 1.08
+                brightnessBoost = 0.1
+            }
+        } else {
+            // Return to normal breathing
+            withAnimation(.easeInOut(duration: 2.5).repeatForever(autoreverses: true)) {
+                breatheScale = 1.05
+                brightnessBoost = 0
+            }
+        }
+    }
+
+    private func updateSpeakingAnimation(speaking: Bool) {
+        speakingTimer?.invalidate()
+
+        if speaking {
+            // Start gentle trembling/vibration
+            speakingTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
+                withAnimation(.linear(duration: 0.05)) {
+                    trembleOffset = CGSize(
+                        width: CGFloat.random(in: -1.5...1.5),
+                        height: CGFloat.random(in: -1.5...1.5)
+                    )
+                }
+            }
+        } else {
+            // Stop trembling
+            withAnimation(.easeOut(duration: 0.1)) {
+                trembleOffset = .zero
+            }
         }
     }
 
@@ -2439,7 +2963,10 @@ struct EyeView: View {
 // MARK: - Mouth Component
 struct MouthView: View {
     let isThinking: Bool
+    let isSpeaking: Bool
     let animation: Bool
+
+    @State private var speakingMouthHeight: CGFloat = 8
 
     var body: some View {
         Group {
@@ -2450,6 +2977,19 @@ struct MouthView: View {
                     .frame(width: 12, height: 12)
                     .scaleEffect(animation ? 1.0 : 0.9)
                     .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: animation)
+            } else if isSpeaking {
+                // Speaking mouth - animated open/close
+                Capsule()
+                    .fill(Color(hex: "CBA972").opacity(0.6))
+                    .frame(width: 18, height: speakingMouthHeight)
+                    .onAppear {
+                        withAnimation(.easeInOut(duration: 0.15).repeatForever(autoreverses: true)) {
+                            speakingMouthHeight = 14
+                        }
+                    }
+                    .onDisappear {
+                        speakingMouthHeight = 8
+                    }
             } else {
                 // Happy smile
                 Path { path in
@@ -2570,6 +3110,24 @@ struct CalendarView: View {
                         .foregroundColor(Color.white.opacity(0.4))
                 }
                 .padding(.bottom, 30)
+            }
+
+            // AI Chat Button (bottom-right) - same as HomeView
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    Button(action: {
+                        appState.closeCalendar()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            appState.openChat()
+                        }
+                    }) {
+                        LumiPetAvatar()
+                    }
+                    .padding(.trailing, 24)
+                    .padding(.bottom, 110)
+                }
             }
         }
         .onAppear {
