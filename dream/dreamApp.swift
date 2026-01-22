@@ -20,17 +20,36 @@ import SwiftUI
 import Combine
 import SpriteKit
 import AVFoundation
+import SwiftData
 
 // MARK: - ========== 应用入口 ==========
 @main
 struct dreamApp: App {
     @StateObject private var appState = AppState()
 
+    // Configure SwiftData ModelContainer
+    let modelContainer: ModelContainer = {
+        let schema = Schema([
+            Goal.self,
+            Phase.self,
+            DailyTask.self,
+            ChatMessage.self
+        ])
+        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+
+        do {
+            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+        } catch {
+            fatalError("Could not create ModelContainer: \(error)")
+        }
+    }()
+
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(appState)
                 .preferredColorScheme(.light)
+                .modelContainer(modelContainer)
         }
     }
 }
@@ -64,6 +83,35 @@ struct RootView: View {
                 ArchiveView()
                     .transition(.move(edge: .trailing))
                     .zIndex(30)
+            }
+
+            // Floating Banner (Silent Narrator) - Always on top
+            FloatingBanner(
+                message: appState.floatingBannerMessage,
+                isVisible: appState.showFloatingBanner
+            )
+            .zIndex(200)
+
+            // Task Detail Overlay
+            if appState.showTaskDetail {
+                TaskDetailOverlay(
+                    goalTitle: appState.taskDetailGoalTitle,
+                    phaseName: appState.taskDetailPhaseName,
+                    taskDetail: appState.taskDetailDescription,
+                    bubbleColor: appState.taskDetailColor,
+                    onDismiss: {
+                        appState.hideTaskDetailOverlay()
+                    }
+                )
+                .zIndex(150)
+            }
+
+            // Letter Envelope Overlay (Goal Completion Ritual)
+            if appState.showLetterEnvelope {
+                LetterEnvelopeOverlay {
+                    appState.openGraduationLetter()
+                }
+                .zIndex(250)
             }
         }
         .animation(.spring(response: 0.5, dampingFraction: 0.8), value: appState.showCalendar)
@@ -112,7 +160,29 @@ class AppState: ObservableObject {
     @Published var dayCompletions: [String: DayCompletion] = [:]
 
     @Published var bubbles: [Bubble] = []
-    @Published var chatMessages: [ChatMessage] = []
+    @Published var chatMessages: [ChatMessage] = [] // SwiftData ChatMessage models
+
+    // MARK: - Goal/Vision Tracking (for AI context)
+    /// Current active goal/vision name (set by AI in Phase 1)
+    @Published var currentGoalName: String?
+    /// Current app phase for AI prompts
+    @Published var currentPhase: AppPhase = .onboarding
+
+    // MARK: - UI Overlays & Notifications
+    /// Task detail overlay state
+    @Published var showTaskDetail: Bool = false
+    @Published var taskDetailGoalTitle: String = ""
+    @Published var taskDetailPhaseName: String = ""
+    @Published var taskDetailDescription: String = ""
+    @Published var taskDetailColor: String = "FFD700"
+
+    /// Floating banner (silent narrator) state
+    @Published var showFloatingBanner: Bool = false
+    @Published var floatingBannerMessage: String = ""
+
+    /// Goal completion ritual state
+    @Published var showLetterEnvelope: Bool = false
+    @Published var shouldAutoRequestGraduationLetter: Bool = false
 
     private let calendar = Calendar.current
     private let dateFormatter: DateFormatter = {
@@ -130,9 +200,8 @@ class AppState: ObservableObject {
             Bubble(text: "整理房间", type: .small, position: CGPoint(x: 0.65, y: 0.7))
         ]
 
-        chatMessages = [
-            ChatMessage(text: "你好呀，今天想聊点什么？或者，有什么想要实现的小愿望吗？", isUser: false)
-        ]
+        // Chat messages will be loaded from SwiftData
+        chatMessages = []
 
         // Initialize sample completion data for demo
         initializeSampleData()
@@ -265,9 +334,7 @@ class AppState: ObservableObject {
         dayCompletions[tomorrowKey] = completion
     }
 
-    func addChatMessage(_ text: String, isUser: Bool) {
-        chatMessages.append(ChatMessage(text: text, isUser: isUser))
-    }
+    // addChatMessage is deprecated - messages are now saved directly to SwiftData
 
     // MARK: - Calendar Helpers
 
@@ -319,6 +386,152 @@ class AppState: ObservableObject {
             displayedMonth = prevMonth
         }
     }
+
+    // MARK: - AI Context Helpers
+
+    /// Get today's main task (first core bubble)
+    func getTodayTask() -> String? {
+        return bubbles.first(where: { $0.type == .core })?.text
+    }
+
+    /// Calculate current streak days (consecutive days with completed core bubbles)
+    func calculateStreakDays() -> Int {
+        let today = Date()
+        var streak = 0
+
+        // Count backwards from yesterday (don't count today as it's in progress)
+        for dayOffset in 1...365 {
+            guard let checkDate = calendar.date(byAdding: .day, value: -dayOffset, to: today) else {
+                break
+            }
+
+            let key = dateFormatter.string(from: checkDate)
+            if let dayData = dayCompletions[key],
+               dayData.completionType == .coreCompleted {
+                streak += 1
+            } else {
+                // Streak broken
+                break
+            }
+        }
+
+        return streak
+    }
+
+    /// Reload chat messages from SwiftData
+    func reloadChatMessages(from modelContext: ModelContext) {
+        var descriptor = FetchDescriptor<ChatMessage>(
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+
+        if let messages = try? modelContext.fetch(descriptor) {
+            self.chatMessages = messages
+        }
+    }
+
+    /// Initialize welcome message if chat history is empty
+    func initializeWelcomeMessageIfNeeded(modelContext: ModelContext) {
+        let descriptor = FetchDescriptor<ChatMessage>()
+        if let messages = try? modelContext.fetch(descriptor), messages.isEmpty {
+            let welcomeMessage = ChatMessage(
+                content: "你好呀，今天想聊点什么？或者，有什么想要实现的小愿望吗？",
+                isUser: false
+            )
+            modelContext.insert(welcomeMessage)
+            try? modelContext.save()
+            reloadChatMessages(from: modelContext)
+        }
+    }
+
+    // MARK: - UI Overlay Helpers
+
+    /// Show task detail overlay (for long press on bubbles)
+    func showTaskDetailOverlay(
+        goalTitle: String,
+        phaseName: String,
+        description: String,
+        color: String
+    ) {
+        taskDetailGoalTitle = goalTitle
+        taskDetailPhaseName = phaseName
+        taskDetailDescription = description
+        taskDetailColor = color
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            showTaskDetail = true
+        }
+    }
+
+    /// Hide task detail overlay
+    func hideTaskDetailOverlay() {
+        withAnimation(.easeOut(duration: 0.2)) {
+            showTaskDetail = false
+        }
+    }
+
+    /// Show floating banner with encouragement message
+    func showBanner(message: String) {
+        floatingBannerMessage = message
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            showFloatingBanner = true
+        }
+
+        // Auto-dismiss after 3 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            withAnimation(.easeOut(duration: 0.3)) {
+                self.showFloatingBanner = false
+            }
+        }
+    }
+
+    // MARK: - Goal Completion Ritual
+
+    /// Trigger the goal completion ritual (show letter envelope)
+    func triggerGoalCompletion() {
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+            showLetterEnvelope = true
+        }
+        shouldAutoRequestGraduationLetter = true
+    }
+
+    /// Open the graduation letter (called when envelope is tapped)
+    func openGraduationLetter() {
+        // Hide envelope
+        withAnimation(.easeOut(duration: 0.3)) {
+            showLetterEnvelope = false
+        }
+
+        // Move to witness phase
+        currentPhase = .witness
+
+        // Open chat to show graduation letter
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            self.openChat()
+        }
+    }
+
+    /// Check if completing this bubble completes the goal
+    func checkGoalCompletion(modelContext: ModelContext) {
+        // Fetch active goal from SwiftData
+        var descriptor = FetchDescriptor<Goal>(
+            predicate: #Predicate { !$0.isCompleted },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+
+        guard let activeGoal = try? modelContext.fetch(descriptor).first else {
+            return
+        }
+
+        // Check if all tasks are now completed
+        if activeGoal.isFullyCompleted {
+            // Mark goal as completed
+            activeGoal.isCompleted = true
+            try? modelContext.save()
+
+            // Trigger completion ritual
+            triggerGoalCompletion()
+        }
+    }
 }
 
 struct Bubble: Identifiable, Equatable {
@@ -332,11 +545,7 @@ struct Bubble: Identifiable, Equatable {
     }
 }
 
-struct ChatMessage: Identifiable {
-    let id = UUID()
-    let text: String
-    let isUser: Bool
-}
+// ChatMessage is now defined in DataModels.swift as a SwiftData @Model
 
 // MARK: - ========== 肥皂泡材质组件 ==========
 struct SoapBubbleView: View {
@@ -852,6 +1061,7 @@ struct BurstParticle: Identifiable {
 // MARK: - ========== 2. Home 页面（SpriteKit 升级版）==========
 struct HomeView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.modelContext) private var modelContext
     @State private var bubbleScene: BubbleScene = BubbleScene(size: CGSize(width: 430, height: 932))
     @State private var pulseAnimation = false
     @State private var archivePulse = false
@@ -1315,6 +1525,10 @@ struct HomeView: View {
                 snoozeBubble(bubbleId)
             }
 
+            bubbleScene.onBubbleLongPressed = { bubbleId in
+                showBubbleDetail(bubbleId)
+            }
+
             bubbleScene.onDragStateChanged = { isDragging in
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                     isDraggingBubble = isDragging
@@ -1324,6 +1538,7 @@ struct HomeView: View {
             // Clear interaction handlers for read-only mode
             bubbleScene.onBubbleTapped = nil
             bubbleScene.onBubbleFlung = nil
+            bubbleScene.onBubbleLongPressed = nil
             bubbleScene.onDragStateChanged = nil
         }
     }
@@ -1346,6 +1561,9 @@ struct HomeView: View {
             bubbleScene.onBubbleFlung = { bubbleId in
                 snoozeBubble(bubbleId)
             }
+            bubbleScene.onBubbleLongPressed = { bubbleId in
+                showBubbleDetail(bubbleId)
+            }
             bubbleScene.onDragStateChanged = { isDragging in
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                     isDraggingBubble = isDragging
@@ -1354,6 +1572,7 @@ struct HomeView: View {
         } else {
             bubbleScene.onBubbleTapped = nil
             bubbleScene.onBubbleFlung = nil
+            bubbleScene.onBubbleLongPressed = nil
             bubbleScene.onDragStateChanged = nil
         }
     }
@@ -1423,6 +1642,37 @@ struct HomeView: View {
         guard let bubble = appState.bubbles.first(where: { $0.id == bubbleId }) else { return }
         bubbleScene.popBubble(id: bubbleId)
         appState.completeBubble(bubble)
+
+        // Check for goal completion (Trigger A: Natural Completion)
+        appState.checkGoalCompletion(modelContext: modelContext)
+
+        // Silent Narrator: Get encouragement from AI
+        Task {
+            do {
+                let goalName = appState.currentGoalName
+                let todayTask = appState.getTodayTask()
+                let streakDays = appState.calculateStreakDays()
+
+                let encouragement = try await ChatService.shared.sendSilentEvent(
+                    trigger: "completed",
+                    goalName: goalName,
+                    todayTask: todayTask,
+                    streakDays: streakDays,
+                    context: "用户完成了任务：\(bubble.text)"
+                )
+
+                await MainActor.run {
+                    appState.showBanner(message: encouragement)
+                }
+            } catch {
+                print("Silent event error: \(error.localizedDescription)")
+                // Show fallback encouragement
+                await MainActor.run {
+                    let fallbackMessages = ["很棒！继续加油！", "做得好！", "又完成一个！", "保持节奏！"]
+                    appState.showBanner(message: fallbackMessages.randomElement() ?? "很棒！")
+                }
+            }
+        }
     }
 
     private func snoozeBubble(_ bubbleId: UUID) {
@@ -1447,6 +1697,20 @@ struct HomeView: View {
                 showSnoozeHint = false
             }
         }
+    }
+
+    private func showBubbleDetail(_ bubbleId: UUID) {
+        guard let bubble = appState.bubbles.first(where: { $0.id == bubbleId }) else { return }
+        guard bubble.type == .core else { return } // Only show detail for core bubbles
+
+        // TODO: Fetch real goal data from SwiftData when Goal system is fully integrated
+        // For now, show placeholder data
+        appState.showTaskDetailOverlay(
+            goalTitle: appState.currentGoalName ?? "未设置目标",
+            phaseName: "习惯养成期",
+            description: bubble.text + "\n\n这是一个核心任务，需要每日完成。长期坚持将帮助你实现目标。",
+            color: "FFD700"
+        )
     }
 }
 
@@ -1837,6 +2101,7 @@ class BubbleNode: SKNode {
 class BubbleScene: SKScene {
     var onBubbleTapped: ((UUID) -> Void)?
     var onBubbleFlung: ((UUID) -> Void)?
+    var onBubbleLongPressed: ((UUID) -> Void)?  // Notify when bubble is long-pressed
     var onDragStateChanged: ((Bool) -> Void)?  // Notify when drag starts/ends
     var archivePosition: CGPoint = .zero
     var calendarPosition: CGPoint = .zero  // Left-top corner for snooze to tomorrow
@@ -1846,6 +2111,8 @@ class BubbleScene: SKScene {
 
     private var bubbleNodes: [UUID: BubbleNode] = [:]
     private var draggedBubble: BubbleNode?
+    private var longPressTimer: Timer?
+    private var longPressDetected: Bool = false
     private var dragStartPosition: CGPoint = .zero
     private var dragStartTime: TimeInterval = 0
 
@@ -2072,9 +2339,21 @@ class BubbleScene: SKScene {
             draggedBubble = bubbleNode
             dragStartPosition = location
             dragStartTime = Date().timeIntervalSince1970
+            longPressDetected = false
 
             bubbleNode.physicsBody?.isDynamic = false
             SoundManager.hapticLight()
+
+            // Start long press timer for core bubbles only
+            if bubbleNode.bubbleType == .core {
+                longPressTimer?.invalidate()
+                longPressTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: false) { [weak self] _ in
+                    guard let self = self, let bubble = self.draggedBubble else { return }
+                    self.longPressDetected = true
+                    SoundManager.hapticMedium()
+                    self.onBubbleLongPressed?(bubble.bubbleId)
+                }
+            }
 
             // Notify that dragging started
             onDragStateChanged?(true)
@@ -2086,12 +2365,26 @@ class BubbleScene: SKScene {
               let bubble = draggedBubble else { return }
 
         let location = touch.location(in: self)
+
+        // Cancel long press if movement is detected
+        let dx = location.x - dragStartPosition.x
+        let dy = location.y - dragStartPosition.y
+        let distance = sqrt(dx * dx + dy * dy)
+        if distance > 10 {
+            longPressTimer?.invalidate()
+            longPressTimer = nil
+        }
+
         bubble.position = location
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first,
               let bubble = draggedBubble else { return }
+
+        // Cancel long press timer
+        longPressTimer?.invalidate()
+        longPressTimer = nil
 
         let endPosition = touch.location(in: self)
         let endTime = Date().timeIntervalSince1970
@@ -2102,6 +2395,13 @@ class BubbleScene: SKScene {
         let duration = endTime - dragStartTime
 
         bubble.physicsBody?.isDynamic = true
+
+        // If long press was detected, don't process tap or drag
+        if longPressDetected {
+            onDragStateChanged?(false)
+            draggedBubble = nil
+            return
+        }
 
         // Check if bubble was dragged to calendar icon (top-left corner) for snooze to tomorrow
         let distanceToCalendar = sqrt(pow(endPosition.x - calendarPosition.x, 2) +
@@ -2163,6 +2463,7 @@ struct BubbleSceneView: UIViewRepresentable {
 struct ChatView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @State private var inputText = ""
     @State private var isThinking = false
     @State private var dragOffset: CGFloat = 0
@@ -2214,8 +2515,25 @@ struct ChatView: View {
                     ScrollView {
                         LazyVStack(spacing: 16) {
                             ForEach(appState.chatMessages) { message in
-                                ChatMessageRow(message: message)
+                                // Check if message contains a blueprint (parsed JSON)
+                                if !message.isUser, let blueprint = extractBlueprintFromMessage(message.content) {
+                                    ContractCard(blueprint: blueprint) {
+                                        // Send confirmation
+                                        sendConfirmation()
+                                    }
                                     .id(message.id)
+                                } else if !message.isUser && isDraftPreview(message.content) {
+                                    // Render draft as styled card (before JSON is generated)
+                                    DraftPreviewCard(content: message.content)
+                                        .id(message.id)
+                                } else if !message.isUser && containsJSONCodeBlock(message.content) {
+                                    // Hide raw JSON, show processing card
+                                    ContractStatusCard()
+                                        .id(message.id)
+                                } else {
+                                    ChatMessageRow(message: message)
+                                        .id(message.id)
+                                }
                             }
 
                             // Typing Indicator
@@ -2229,13 +2547,20 @@ struct ChatView: View {
                     }
                     .scrollDismissesKeyboard(.interactively)
                     .onChange(of: appState.chatMessages.count) { _ in
-                        scrollToBottom(proxy: scrollProxy)
+                        // Delay scroll to avoid glitch
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            scrollToBottom(proxy: scrollProxy)
+                        }
                     }
                     .onChange(of: isThinking) { _ in
-                        scrollToBottom(proxy: scrollProxy)
+                        // Delay scroll to avoid glitch
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            scrollToBottom(proxy: scrollProxy)
+                        }
                     }
                     .onChange(of: isKeyboardVisible) { visible in
-                        if visible {
+                        // Delay scroll to avoid keyboard animation glitch
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             scrollToBottom(proxy: scrollProxy)
                         }
                     }
@@ -2295,6 +2620,16 @@ struct ChatView: View {
         )
         .onAppear {
             setupKeyboardObservers()
+            // Initialize welcome message if chat history is empty
+            appState.initializeWelcomeMessageIfNeeded(modelContext: modelContext)
+            // Load chat messages from SwiftData
+            appState.reloadChatMessages(from: modelContext)
+
+            // Auto-request graduation letter if needed
+            if appState.shouldAutoRequestGraduationLetter {
+                appState.shouldAutoRequestGraduationLetter = false
+                requestGraduationLetter()
+            }
         }
         .onDisappear {
             removeKeyboardObservers()
@@ -2326,26 +2661,42 @@ struct ChatView: View {
         guard !inputText.isEmpty else { return }
         let messageText = inputText
         inputText = ""
-        appState.addChatMessage(messageText, isUser: true)
 
         // Show thinking indicator
         isThinking = true
 
-        // Send to AI API
+        // Send to AI API with dynamic context
         Task {
             do {
+                // Gather context data
+                let goalName = appState.currentGoalName
+                let todayTask = appState.getTodayTask()
+                let streakDays = appState.calculateStreakDays()
+
                 let response = try await ChatService.shared.sendMessage(
                     userText: messageText,
-                    phase: .companion, // Default to companion mode
-                    context: "" // Add context here if needed
+                    phase: appState.currentPhase,
+                    goalName: goalName,
+                    todayTask: todayTask,
+                    streakDays: streakDays,
+                    context: "",
+                    modelContext: modelContext
                 )
 
                 await MainActor.run {
                     isThinking = false
-                    // Use displayText to show clean response without JSON blocks
-                    appState.addChatMessage(response.displayText, isUser: false)
 
-                    // Handle extracted JSON if present
+                    // Reload chat messages from SwiftData
+                    appState.reloadChatMessages(from: modelContext)
+
+                    // If a new goal was created, update app state
+                    if let goal = response.createdGoal {
+                        appState.currentGoalName = goal.title
+                        appState.currentPhase = .companion // Move to companion phase
+                        print("ChatView: New goal created - '\(goal.title)'")
+                    }
+
+                    // Handle extracted JSON if present (for legacy support)
                     if response.hasJSON {
                         handleAIResponse(response)
                     }
@@ -2355,7 +2706,10 @@ struct ChatView: View {
                     isThinking = false
                     // Show error message or fallback
                     let errorMessage = "抱歉，我暂时无法回应。请稍后再试。"
-                    appState.addChatMessage(errorMessage, isUser: false)
+                    let errorChatMessage = ChatMessage(content: errorMessage, isUser: false)
+                    modelContext.insert(errorChatMessage)
+                    try? modelContext.save()
+                    appState.reloadChatMessages(from: modelContext)
                     print("ChatService error: \(error.localizedDescription)")
                 }
             }
@@ -2371,6 +2725,12 @@ struct ChatView: View {
                 // Handle bubble reschedule
                 print("Reschedule action detected")
                 // TODO: Implement reschedule logic
+
+            case "trigger_phase_3_completion":
+                // Trigger B: Early Finish - AI detected goal completion
+                print("AI triggered goal completion (early finish)")
+                appState.triggerGoalCompletion()
+
             default:
                 break
             }
@@ -2386,6 +2746,89 @@ struct ChatView: View {
             // Handle crystal creation
             print("Received crystal data: \(crystal)")
             // TODO: Implement crystal creation logic
+        }
+    }
+
+    /// Extract GoalBlueprint from message content
+    private func extractBlueprintFromMessage(_ content: String) -> GoalBlueprint? {
+        return JSONParser.extractGoalBlueprint(from: content)
+    }
+
+    /// Check if message is a draft preview (contains draft markers)
+    private func isDraftPreview(_ content: String) -> Bool {
+        let draftMarkers = [
+            "【微光契约草案】",
+            "【愿景契约草案】",
+            "愿景契约草案",
+            "微光契约草案",
+            "草案如下",
+            "以下是草案"
+        ]
+
+        for marker in draftMarkers {
+            if content.contains(marker) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Check if message contains JSON code block
+    private func containsJSONCodeBlock(_ content: String) -> Bool {
+        // Case-insensitive check for ```json
+        let pattern = "```(?i)json"
+        if let _ = content.range(of: pattern, options: .regularExpression) {
+            return true
+        }
+        return false
+    }
+
+    /// Send confirmation message
+    private func sendConfirmation() {
+        inputText = "确认"
+        sendMessage()
+    }
+
+    /// Auto-request graduation letter (hidden from user)
+    private func requestGraduationLetter() {
+        // Show thinking indicator
+        isThinking = true
+
+        Task {
+            do {
+                // Gather context data
+                let goalName = appState.currentGoalName
+                let todayTask = appState.getTodayTask()
+                let streakDays = appState.calculateStreakDays()
+
+                // Send hidden request for graduation letter
+                let response = try await ChatService.shared.sendMessage(
+                    userText: "请为我写一封毕业信", // Hidden trigger message
+                    phase: .witness,
+                    goalName: goalName,
+                    todayTask: todayTask,
+                    streakDays: streakDays,
+                    context: "用户完成了全部目标任务，请生成毕业信",
+                    modelContext: modelContext
+                )
+
+                await MainActor.run {
+                    isThinking = false
+
+                    // Reload chat messages from SwiftData
+                    appState.reloadChatMessages(from: modelContext)
+                }
+            } catch {
+                await MainActor.run {
+                    isThinking = false
+                    let errorMessage = "抱歉，暂时无法生成毕业信。请稍后再试。"
+                    let errorChatMessage = ChatMessage(content: errorMessage, isUser: false)
+                    modelContext.insert(errorChatMessage)
+                    try? modelContext.save()
+                    appState.reloadChatMessages(from: modelContext)
+                    print("Graduation letter error: \(error.localizedDescription)")
+                }
+            }
         }
     }
 
@@ -2418,7 +2861,7 @@ struct ChatMessageRow: View {
             }
 
             // Message Bubble
-            Text(message.text)
+            Text(message.content)
                 .font(.system(size: 15))
                 .foregroundColor(message.isUser ? .white : Color(hex: "3C3C3C"))
                 .padding(.horizontal, 14)
@@ -3927,6 +4370,496 @@ struct CompletedGoal: Identifiable {
     let season: String
     let position: CGPoint
     let color: Color
+}
+
+// MARK: - Task Detail Overlay (Long Press)
+struct TaskDetailOverlay: View {
+    let goalTitle: String
+    let phaseName: String
+    let taskDetail: String
+    let bubbleColor: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        ZStack {
+            // Semi-transparent background
+            Color.black.opacity(0.4)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    onDismiss()
+                }
+
+            // Glassmorphism card
+            VStack(spacing: 20) {
+                // Goal Title
+                Text(goalTitle)
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundColor(Color(hex: bubbleColor))
+                    .multilineTextAlignment(.center)
+
+                // Phase Name
+                Text(phaseName)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(Color(hex: "8B8B8B"))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(Color(hex: bubbleColor).opacity(0.15))
+                    )
+
+                // Divider
+                Rectangle()
+                    .fill(Color(hex: bubbleColor).opacity(0.3))
+                    .frame(height: 1)
+                    .padding(.horizontal, 20)
+
+                // Task Detail
+                Text(taskDetail)
+                    .font(.system(size: 16))
+                    .foregroundColor(Color(hex: "3C3C3C"))
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(6)
+                    .padding(.horizontal, 24)
+
+                // Dismiss hint
+                Text("轻触背景关闭")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color(hex: "8B8B8B"))
+                    .padding(.top, 8)
+            }
+            .padding(.vertical, 32)
+            .padding(.horizontal, 40)
+            .background(
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 24)
+                            .stroke(
+                                LinearGradient(
+                                    colors: [
+                                        Color(hex: bubbleColor).opacity(0.5),
+                                        Color(hex: bubbleColor).opacity(0.2)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 2
+                            )
+                    )
+            )
+            .shadow(color: Color(hex: bubbleColor).opacity(0.3), radius: 30, x: 0, y: 10)
+            .padding(.horizontal, 40)
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+    }
+}
+
+// MARK: - Floating Banner (Silent Narrator Toast)
+struct FloatingBanner: View {
+    let message: String
+    let isVisible: Bool
+
+    var body: some View {
+        VStack {
+            if isVisible {
+                HStack(spacing: 10) {
+                    // Lumi mini icon
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [
+                                    Color(hex: "FFD700"),
+                                    Color(hex: "CBA972")
+                                ],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: 12
+                            )
+                        )
+                        .frame(width: 24, height: 24)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.5), lineWidth: 1)
+                        )
+
+                    Text(message)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(Color(hex: "3C3C3C"))
+                        .lineLimit(2)
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
+                .background(
+                    Capsule()
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            Capsule()
+                                .stroke(
+                                    LinearGradient(
+                                        colors: [
+                                            Color(hex: "FFD700").opacity(0.4),
+                                            Color(hex: "CBA972").opacity(0.2)
+                                        ],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    ),
+                                    lineWidth: 1
+                                )
+                        )
+                )
+                .shadow(color: Color(hex: "FFD700").opacity(0.2), radius: 15, x: 0, y: 5)
+                .padding(.top, 60)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            Spacer()
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isVisible)
+    }
+}
+
+// MARK: - Draft Preview Card (Blueprint Text)
+struct DraftPreviewCard: View {
+    let content: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Header with icon
+            HStack(spacing: 12) {
+                Image(systemName: "doc.text.fill")
+                    .font(.system(size: 24))
+                    .foregroundColor(Color(hex: "FFD700"))
+
+                Text("愿景契约草案")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(Color(hex: "FFD700"))
+
+                Spacer()
+            }
+
+            // Divider
+            Rectangle()
+                .fill(Color(hex: "FFD700").opacity(0.3))
+                .frame(height: 1)
+
+            // Content
+            Text(content)
+                .font(.system(size: 15))
+                .foregroundColor(Color(hex: "3C3C3C"))
+                .lineSpacing(6)
+
+            // Footer hint
+            Text("请确认后继续")
+                .font(.system(size: 13))
+                .foregroundColor(Color(hex: "8B8B8B"))
+                .padding(.top, 8)
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(hex: "FFF9E6"),
+                            Color.white
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    Color(hex: "FFD700"),
+                                    Color(hex: "CBA972")
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 2
+                        )
+                )
+        )
+        .shadow(color: Color(hex: "FFD700").opacity(0.2), radius: 15, x: 0, y: 5)
+        .padding(.horizontal, 16)
+    }
+}
+
+// MARK: - Contract Status Card (Processing)
+struct ContractStatusCard: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            // Icon
+            Image(systemName: "doc.badge.gearshape")
+                .font(.system(size: 48))
+                .foregroundColor(Color(hex: "FFD700"))
+
+            // Status text
+            VStack(spacing: 8) {
+                Text("契约已生效")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(Color(hex: "3C3C3C"))
+
+                Text("愿景正在生成...")
+                    .font(.system(size: 15))
+                    .foregroundColor(Color(hex: "8B8B8B"))
+            }
+        }
+        .padding(.vertical, 32)
+        .padding(.horizontal, 40)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    Color(hex: "FFD700").opacity(0.5),
+                                    Color(hex: "CBA972").opacity(0.3)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1.5
+                        )
+                )
+        )
+        .shadow(color: Color(hex: "FFD700").opacity(0.15), radius: 15, x: 0, y: 5)
+        .padding(.horizontal, 16)
+    }
+}
+
+// MARK: - Contract Card (Blueprint Message)
+struct ContractCard: View {
+    let blueprint: GoalBlueprint
+    let onConfirm: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Header
+            HStack {
+                Image(systemName: "doc.text.fill")
+                    .foregroundColor(Color(hex: "FFD700"))
+                    .font(.system(size: 20))
+
+                Text("愿景契约草案")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(Color(hex: "FFD700"))
+
+                Spacer()
+            }
+
+            // Goal Title
+            VStack(alignment: .leading, spacing: 6) {
+                Text("目标")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color(hex: "8B8B8B"))
+
+                Text(blueprint.goalTitle)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(Color(hex: "3C3C3C"))
+            }
+
+            // Divider
+            Rectangle()
+                .fill(Color(hex: "FFD700").opacity(0.3))
+                .frame(height: 1)
+
+            // Phases
+            VStack(alignment: .leading, spacing: 12) {
+                Text("阶段计划")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color(hex: "8B8B8B"))
+
+                ForEach(Array(blueprint.phases.enumerated()), id: \.offset) { index, phase in
+                    HStack(alignment: .top, spacing: 12) {
+                        // Phase number
+                        Text("\(index + 1)")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(Color(hex: phase.bubbleColor))
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Circle()
+                                    .fill(Color(hex: phase.bubbleColor).opacity(0.15))
+                            )
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(phase.phaseName)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(Color(hex: "3C3C3C"))
+
+                            Text("\(phase.durationDays)天 · \(phase.dailyTaskLabel)")
+                                .font(.system(size: 13))
+                                .foregroundColor(Color(hex: "8B8B8B"))
+                        }
+
+                        Spacer()
+                    }
+                }
+            }
+
+            // Confirm Button
+            Button(action: onConfirm) {
+                HStack {
+                    Image(systemName: "checkmark.circle.fill")
+                    Text("确认启动")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(
+                    LinearGradient(
+                        colors: [
+                            Color(hex: "FFD700"),
+                            Color(hex: "CBA972")
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .cornerRadius(12)
+            }
+            .padding(.top, 8)
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    Color(hex: "FFD700"),
+                                    Color(hex: "CBA972")
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 2
+                        )
+                )
+        )
+        .shadow(color: Color(hex: "FFD700").opacity(0.2), radius: 20, x: 0, y: 10)
+        .padding(.horizontal, 16)
+    }
+}
+
+// MARK: - Letter Envelope Overlay (Goal Completion Ritual)
+struct LetterEnvelopeOverlay: View {
+    let onTap: () -> Void
+
+    @State private var scale: CGFloat = 0.5
+    @State private var opacity: Double = 0
+    @State private var glowIntensity: Double = 0
+    @State private var particlesVisible = false
+
+    var body: some View {
+        ZStack {
+            // Semi-transparent background
+            Color.black.opacity(0.6)
+                .ignoresSafeArea()
+
+            // Particle effect background
+            if particlesVisible {
+                ForEach(0..<20, id: \.self) { index in
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(hex: "FFD700"),
+                                    Color(hex: "CBA972")
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 8, height: 8)
+                        .offset(
+                            x: CGFloat.random(in: -150...150),
+                            y: CGFloat.random(in: -200...200)
+                        )
+                        .opacity(Double.random(in: 0.3...0.8))
+                        .blur(radius: 2)
+                }
+            }
+
+            // Central content
+            VStack(spacing: 32) {
+                // Envelope icon with glow
+                ZStack {
+                    // Outer glow layers
+                    ForEach(0..<3, id: \.self) { index in
+                        Image(systemName: "envelope.circle.fill")
+                            .font(.system(size: 140))
+                            .foregroundColor(Color(hex: "FFD700"))
+                            .opacity(glowIntensity * 0.3)
+                            .scaleEffect(1.0 + Double(index) * 0.15 * glowIntensity)
+                            .blur(radius: 15 + Double(index) * 10)
+                    }
+
+                    // Main envelope icon
+                    Image(systemName: "envelope.circle.fill")
+                        .font(.system(size: 120))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [
+                                    Color(hex: "FFD700"),
+                                    Color(hex: "CBA972")
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .shadow(color: Color(hex: "FFD700").opacity(0.5), radius: 30, x: 0, y: 10)
+                }
+                .scaleEffect(scale)
+
+                // Label
+                VStack(spacing: 8) {
+                    Text("微光为你寄来了一封信")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(.white)
+
+                    Text("轻触查看")
+                        .font(.system(size: 16))
+                        .foregroundColor(.white.opacity(0.7))
+                }
+                .opacity(opacity)
+            }
+        }
+        .onTapGesture {
+            onTap()
+        }
+        .onAppear {
+            // Stagger animations
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.7)) {
+                scale = 1.0
+                opacity = 1.0
+            }
+
+            // Start particle effect
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                withAnimation {
+                    particlesVisible = true
+                }
+            }
+
+            // Pulsing glow animation
+            withAnimation(
+                .easeInOut(duration: 1.5)
+                .repeatForever(autoreverses: true)
+            ) {
+                glowIntensity = 1.0
+            }
+        }
+    }
 }
 
 // MARK: - ========== 工具扩展 ==========

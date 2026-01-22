@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 // MARK: - Chat Response Models
 
@@ -10,8 +11,20 @@ struct ChatResponse {
     /// Extracted JSON data if present (from markdown code blocks)
     let extractedJSON: [String: Any]?
 
+    /// Created Goal object if AI response contained a goal blueprint
+    let createdGoal: Goal?
+
     /// Whether the response contains structured JSON data
     var hasJSON: Bool { extractedJSON != nil }
+
+    /// Whether a new goal was created from this response
+    var hasCreatedGoal: Bool { createdGoal != nil }
+
+    init(text: String, extractedJSON: [String: Any]? = nil, createdGoal: Goal? = nil) {
+        self.text = text
+        self.extractedJSON = extractedJSON
+        self.createdGoal = createdGoal
+    }
 }
 
 /// API error types
@@ -103,11 +116,8 @@ final class ChatService {
     private let session = URLSession.shared
     private let promptManager = PromptManager.shared
 
-    /// Conversation history for context (kept in memory)
-    private var conversationHistory: [[String: String]] = []
-
-    /// Maximum number of messages to keep in history
-    private let maxHistoryCount = 20
+    /// Maximum number of messages to fetch for history context
+    private let maxHistoryCount = 10
 
     // MARK: - Public Methods
 
@@ -115,52 +125,109 @@ final class ChatService {
     /// - Parameters:
     ///   - userText: The user's message
     ///   - phase: Current app phase for prompt selection
-    ///   - context: Additional context (goal name, etc.)
-    /// - Returns: ChatResponse with text and optional extracted JSON
-    func sendMessage(userText: String, phase: AppPhase, context: String = "") async throws -> ChatResponse {
+    ///   - goalName: Current goal/vision name (used in Phase 2 & 3)
+    ///   - todayTask: Today's task label (used in Phase 2)
+    ///   - streakDays: Number of consecutive completion days (used in Phase 2 & 3)
+    ///   - context: Additional freeform context
+    ///   - modelContext: SwiftData model context for persisting messages
+    /// - Returns: ChatResponse with text, optional extracted JSON, and optional created Goal
+    func sendMessage(
+        userText: String,
+        phase: AppPhase,
+        goalName: String? = nil,
+        todayTask: String? = nil,
+        streakDays: Int = 0,
+        context: String = "",
+        modelContext: ModelContext
+    ) async throws -> ChatResponse {
         guard Secrets.isConfigured else {
             throw ChatServiceError.notConfigured
         }
 
-        // Get system prompt for current phase
-        let systemPrompt = promptManager.getSystemPrompt(phase: phase, context: context)
+        // Get system prompt for current phase with dynamic context
+        let systemPrompt = promptManager.getSystemPrompt(
+            phase: phase,
+            goalName: goalName,
+            todayTask: todayTask,
+            streakDays: streakDays,
+            context: context
+        )
 
-        // Add user message to history
-        conversationHistory.append(["role": "user", "content": userText])
+        // Save user message to SwiftData
+        let userMessage = ChatMessage(content: userText, isUser: true)
+        modelContext.insert(userMessage)
 
-        // Trim history if too long
-        trimHistory()
+        // Fetch conversation history from SwiftData
+        let conversationHistory = fetchChatHistory(from: modelContext)
 
         // Build messages array
         var messages: [[String: String]] = [
             ["role": "system", "content": systemPrompt]
         ]
         messages.append(contentsOf: conversationHistory)
+        messages.append(["role": "user", "content": userText])
 
         // Make API request
         let responseText = try await makeAPIRequest(messages: messages)
 
-        // Add assistant response to history
-        conversationHistory.append(["role": "assistant", "content": responseText])
+        // Save AI response to SwiftData
+        let aiMessage = ChatMessage(content: responseText, isUser: false)
+        modelContext.insert(aiMessage)
+
+        // Try to save context
+        try? modelContext.save()
 
         // Extract JSON if present (for onboarding and companion phases)
         let extractedJSON = extractJSON(from: responseText)
 
-        return ChatResponse(text: responseText, extractedJSON: extractedJSON)
+        // Try to parse and create Goal if JSON contains a goal blueprint
+        var createdGoal: Goal? = nil
+        if let blueprint = JSONParser.extractGoalBlueprint(from: responseText) {
+            createdGoal = JSONParser.createGoal(from: blueprint, in: modelContext)
+
+            // Link the AI message to the created goal
+            aiMessage.linkedGoalID = createdGoal?.id
+
+            // Save again with goal link
+            try? modelContext.save()
+
+            print("ChatService: Created new Goal '\(blueprint.goalTitle)' from AI response")
+        }
+
+        return ChatResponse(
+            text: responseText,
+            extractedJSON: extractedJSON,
+            createdGoal: createdGoal
+        )
     }
 
     /// Send a silent event (Mode B) - does not affect visible chat history
     /// - Parameters:
     ///   - trigger: Event trigger type (bubble_popped, streak_achieved, etc.)
-    ///   - context: Additional context about the event
+    ///   - goalName: Current goal/vision name
+    ///   - todayTask: Today's task label
+    ///   - streakDays: Number of consecutive completion days
+    ///   - context: Additional freeform context about the event
     /// - Returns: Short encouragement string
-    func sendSilentEvent(trigger: String, context: String = "") async throws -> String {
+    func sendSilentEvent(
+        trigger: String,
+        goalName: String? = nil,
+        todayTask: String? = nil,
+        streakDays: Int = 0,
+        context: String = ""
+    ) async throws -> String {
         guard Secrets.isConfigured else {
             throw ChatServiceError.notConfigured
         }
 
-        // Get silent event prompt
-        let systemPrompt = promptManager.getSilentEventPrompt(trigger: trigger, context: context)
+        // Get silent event prompt with dynamic context
+        let systemPrompt = promptManager.getSilentEventPrompt(
+            trigger: trigger,
+            goalName: goalName,
+            todayTask: todayTask,
+            streakDays: streakDays,
+            context: context
+        )
 
         // Build messages (no history for silent events)
         let messages: [[String: String]] = [
@@ -176,14 +243,36 @@ final class ChatService {
             .replacingOccurrences(of: "\"", with: "")
     }
 
-    /// Clear conversation history
-    func clearHistory() {
-        conversationHistory.removeAll()
+    /// Clear conversation history from SwiftData
+    func clearHistory(modelContext: ModelContext) {
+        let descriptor = FetchDescriptor<ChatMessage>()
+        if let messages = try? modelContext.fetch(descriptor) {
+            for message in messages {
+                modelContext.delete(message)
+            }
+            try? modelContext.save()
+        }
     }
 
-    /// Get current conversation history count
-    var historyCount: Int {
-        conversationHistory.count
+    // MARK: - Private Helper Methods
+
+    /// Fetch recent chat history from SwiftData
+    /// - Parameter modelContext: SwiftData model context
+    /// - Returns: Array of message dictionaries in API format
+    private func fetchChatHistory(from modelContext: ModelContext) -> [[String: String]] {
+        // Create fetch descriptor for recent messages
+        var descriptor = FetchDescriptor<ChatMessage>(
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+        )
+        descriptor.fetchLimit = maxHistoryCount
+
+        // Fetch messages
+        guard let messages = try? modelContext.fetch(descriptor) else {
+            return []
+        }
+
+        // Convert to API format and reverse to chronological order
+        return messages.reversed().map { $0.apiFormat }
     }
 
     // MARK: - Private Methods
@@ -248,14 +337,6 @@ final class ChatService {
         }
 
         return content
-    }
-
-    /// Trim conversation history to max count
-    private func trimHistory() {
-        if conversationHistory.count > maxHistoryCount {
-            // Keep the most recent messages
-            conversationHistory = Array(conversationHistory.suffix(maxHistoryCount))
-        }
     }
 
     /// Extract JSON from markdown code blocks in the response
