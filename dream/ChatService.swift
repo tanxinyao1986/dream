@@ -308,16 +308,26 @@ final class ChatService {
         request.setValue("Bearer \(supabaseAnonKey)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 60
 
+        print("ChatService: 📤 Sending request to Edge Function")
+        print("ChatService: URL: \(edgeFunctionURL)")
+        print("ChatService: Messages count: \(messages.count)")
+
         // Make streaming request
         let (bytes, response) = try await session.bytes(for: request)
 
+        print("ChatService: ✅ Connection established, receiving stream...")
+
         // Check HTTP response
         guard let httpResponse = response as? HTTPURLResponse else {
+            print("ChatService: ❌ Invalid HTTP response")
             throw ChatServiceError.invalidResponse
         }
 
+        print("ChatService: HTTP Status: \(httpResponse.statusCode)")
+
         // Handle errors
         if httpResponse.statusCode != 200 {
+            print("ChatService: ❌ HTTP Error \(httpResponse.statusCode)")
             // Try to read error message from stream
             var errorData = Data()
             for try await byte in bytes {
