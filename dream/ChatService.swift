@@ -365,21 +365,31 @@ final class ChatService {
 
                     // Check for stream end
                     if dataContent == "[DONE]" {
+                        print("ChatService: Stream completed with [DONE]")
                         break
                     }
 
                     // Parse JSON chunk
-                    if let chunkData = dataContent.data(using: .utf8),
-                       let chunk = try? JSONDecoder().decode(StreamChunk.self, from: chunkData),
-                       let delta = chunk.choices.first?.delta.content {
-                        fullContent.append(delta)
-                        print("Stream chunk: \(delta)")
+                    if let chunkData = dataContent.data(using: .utf8) {
+                        do {
+                            let chunk = try JSONDecoder().decode(StreamChunk.self, from: chunkData)
+                            if let delta = chunk.choices.first?.delta.content, !delta.isEmpty {
+                                fullContent.append(delta)
+                                print("ChatService: Stream chunk received: \(delta)")
+                            }
+                        } catch {
+                            print("ChatService: Failed to decode chunk: \(error.localizedDescription)")
+                            print("ChatService: Raw chunk data: \(dataContent)")
+                        }
                     }
                 }
             }
         }
 
+        print("ChatService: Stream finished. Total content length: \(fullContent.count)")
+
         if fullContent.isEmpty {
+            print("ChatService: ERROR - Stream completed but no content received")
             throw ChatServiceError.invalidResponse
         }
 
@@ -392,9 +402,18 @@ final class ChatService {
 
         struct StreamChoice: Codable {
             let delta: Delta
+            let finishReason: String?
+            let index: Int?
+
+            enum CodingKeys: String, CodingKey {
+                case delta
+                case finishReason = "finish_reason"
+                case index
+            }
 
             struct Delta: Codable {
                 let content: String?
+                let role: String?
             }
         }
     }
