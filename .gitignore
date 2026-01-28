@@ -102,3 +102,4 @@ dream/Secrets.swift
 
 # Backup files
 *.backup_*
+.aider*
