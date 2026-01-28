@@ -39,7 +39,7 @@ enum ChatServiceError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notConfigured:
-            return "API key not configured. Please set your API key in Secrets.swift"
+            return "API service not configured. Please check Supabase Edge Function setup."
         case .invalidURL:
             return "Invalid API URL"
         case .invalidResponse:
@@ -105,7 +105,7 @@ private struct APIErrorResponse: Codable {
 
 // MARK: - Chat Service
 
-/// Network layer for communicating with Aliyun Qwen API
+/// Network layer for communicating with AI via Supabase Edge Function
 final class ChatService {
 
     // MARK: - Singleton
@@ -118,6 +118,19 @@ final class ChatService {
 
     /// Maximum number of messages to fetch for history context
     private let maxHistoryCount = 10
+
+    // MARK: - Supabase Configuration
+
+    /// Supabase project URL
+    private let supabaseURL = "https://fvvxpizfqoeknubjjcpr.supabase.co"
+
+    /// Supabase anon key for authentication
+    private let supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ2dnhwaXpmcW9la251YmpqY3ByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwODU2NzEsImV4cCI6MjA4MjY2MTY3MX0.m7iIvF1BGe5XEvvWIDqbqzJ-F_UWeXUbRIx78z3Hl4g"
+
+    /// Edge Function endpoint
+    private var edgeFunctionURL: String {
+        "\(supabaseURL)/functions/v1/chat-lumi"
+    }
 
     // MARK: - Public Methods
 
@@ -140,10 +153,6 @@ final class ChatService {
         context: String = "",
         modelContext: ModelContext
     ) async throws -> ChatResponse {
-        guard Secrets.isConfigured else {
-            throw ChatServiceError.notConfigured
-        }
-
         // Get system prompt for current phase with dynamic context
         let systemPrompt = promptManager.getSystemPrompt(
             phase: phase,
@@ -216,10 +225,6 @@ final class ChatService {
         streakDays: Int = 0,
         context: String = ""
     ) async throws -> String {
-        guard Secrets.isConfigured else {
-            throw ChatServiceError.notConfigured
-        }
-
         // Get silent event prompt with dynamic context
         let systemPrompt = promptManager.getSilentEventPrompt(
             trigger: trigger,
@@ -277,32 +282,34 @@ final class ChatService {
 
     // MARK: - Private Methods
 
-    /// Make the actual API request
+    /// Make the actual API request with streaming support
     private func makeAPIRequest(messages: [[String: String]]) async throws -> String {
-        guard let url = URL(string: Secrets.chatCompletionsURL) else {
+        guard let url = URL(string: edgeFunctionURL) else {
             throw ChatServiceError.invalidURL
         }
 
         // Build request body
         let requestBody: [String: Any] = [
-            "model": Secrets.modelName,
+            "model": "qwen-plus",
             "messages": messages,
             "temperature": 0.7,
-            "max_tokens": 1024
+            "max_tokens": 1024,
+            "stream": true
         ]
 
         let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
 
-        // Create request
+        // Create request with Supabase authentication
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.httpBody = jsonData
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(Secrets.aliyunAPIKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(supabaseAnonKey)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 60
 
-        // Make request
-        let (data, response) = try await session.data(for: request)
+        // Make streaming request
+        let (bytes, response) = try await session.bytes(for: request)
 
         // Check HTTP response
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -311,32 +318,85 @@ final class ChatService {
 
         // Handle errors
         if httpResponse.statusCode != 200 {
-            if let errorResponse = try? JSONDecoder().decode(APIErrorResponse.self, from: data) {
+            // Try to read error message from stream
+            var errorData = Data()
+            for try await byte in bytes {
+                errorData.append(byte)
+            }
+
+            if let errorResponse = try? JSONDecoder().decode(APIErrorResponse.self, from: errorData) {
                 throw ChatServiceError.httpError(
                     statusCode: httpResponse.statusCode,
                     message: errorResponse.error.message
                 )
             }
+
+            let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
             throw ChatServiceError.httpError(
                 statusCode: httpResponse.statusCode,
-                message: "Unknown error"
+                message: errorMessage
             )
         }
 
-        // Decode response
-        let apiResponse: APIResponse
-        do {
-            apiResponse = try JSONDecoder().decode(APIResponse.self, from: data)
-        } catch {
-            throw ChatServiceError.decodingError(error.localizedDescription)
+        // Process SSE stream
+        var fullContent = ""
+        var buffer = ""
+
+        for try await byte in bytes {
+            guard let char = String(data: Data([byte]), encoding: .utf8) else {
+                continue
+            }
+
+            buffer.append(char)
+
+            // Process complete lines
+            if char == "\n" {
+                let line = buffer.trimmingCharacters(in: .whitespaces)
+                buffer = ""
+
+                // Skip empty lines and comments
+                if line.isEmpty || line.hasPrefix(":") {
+                    continue
+                }
+
+                // Parse SSE data line
+                if line.hasPrefix("data: ") {
+                    let dataContent = String(line.dropFirst(6))
+
+                    // Check for stream end
+                    if dataContent == "[DONE]" {
+                        break
+                    }
+
+                    // Parse JSON chunk
+                    if let chunkData = dataContent.data(using: .utf8),
+                       let chunk = try? JSONDecoder().decode(StreamChunk.self, from: chunkData),
+                       let delta = chunk.choices.first?.delta.content {
+                        fullContent.append(delta)
+                        print("Stream chunk: \(delta)")
+                    }
+                }
+            }
         }
 
-        // Extract content from first choice
-        guard let content = apiResponse.choices.first?.message.content else {
+        if fullContent.isEmpty {
             throw ChatServiceError.invalidResponse
         }
 
-        return content
+        return fullContent
+    }
+
+    /// SSE Stream chunk model
+    private struct StreamChunk: Codable {
+        let choices: [StreamChoice]
+
+        struct StreamChoice: Codable {
+            let delta: Delta
+
+            struct Delta: Codable {
+                let content: String?
+            }
+        }
     }
 
     /// Extract JSON from markdown code blocks in the response
