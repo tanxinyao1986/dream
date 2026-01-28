@@ -28,6 +28,9 @@ final class Goal {
     /// Whether the goal is completed
     var isCompleted: Bool
 
+    /// Whether the goal is archived (moved to archive after completion ritual)
+    var isArchived: Bool
+
     /// Creation timestamp
     var createdAt: Date
 
@@ -45,6 +48,7 @@ final class Goal {
         totalDays: Int,
         currentPhaseIndex: Int = 0,
         isCompleted: Bool = false,
+        isArchived: Bool = false,
         createdAt: Date = Date(),
         phases: [Phase] = [],
         dailyTasks: [DailyTask] = []
@@ -54,6 +58,7 @@ final class Goal {
         self.totalDays = totalDays
         self.currentPhaseIndex = currentPhaseIndex
         self.isCompleted = isCompleted
+        self.isArchived = isArchived
         self.createdAt = createdAt
         self.phases = phases
         self.dailyTasks = dailyTasks
@@ -191,6 +196,51 @@ final class ChatMessage {
     }
 }
 
+// MARK: - ArchivedGoal Model
+
+/// Represents a completed and archived goal for the Archive/Stardust view
+@Model
+final class ArchivedGoal {
+    /// Unique identifier
+    var id: UUID
+
+    /// Goal title (e.g., "每天写500字")
+    var title: String
+
+    /// Date when the goal was completed
+    var completionDate: Date
+
+    /// Identity title from AI's letter (e.g., "微光初燃者", "文字炼金术士")
+    var identityTitle: String
+
+    /// Full graduation letter content
+    var letterContent: String
+
+    /// Total days the goal lasted
+    var totalDays: Int
+
+    /// Number of days actually completed
+    var completedDays: Int
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        completionDate: Date = Date(),
+        identityTitle: String,
+        letterContent: String = "",
+        totalDays: Int = 0,
+        completedDays: Int = 0
+    ) {
+        self.id = id
+        self.title = title
+        self.completionDate = completionDate
+        self.identityTitle = identityTitle
+        self.letterContent = letterContent
+        self.totalDays = totalDays
+        self.completedDays = completedDays
+    }
+}
+
 // MARK: - Helper Extensions
 
 extension Goal {
@@ -252,6 +302,14 @@ extension Goal {
     func isLastIncompleteTask(_ task: DailyTask) -> Bool {
         let incomplete = incompleteTasks
         return incomplete.count == 1 && incomplete.first?.id == task.id
+    }
+}
+
+extension DailyTask {
+    /// Check if this is the last incomplete task of the goal
+    var isLastTaskOfGoal: Bool {
+        guard let parentGoal = goal else { return false }
+        return parentGoal.isLastIncompleteTask(self)
     }
 }
 

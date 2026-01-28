@@ -22,6 +22,12 @@ import SpriteKit
 import AVFoundation
 import SwiftData
 
+// MARK: - ========== Notification Names ==========
+extension Notification.Name {
+    /// Posted when goal data changes (created, updated, deleted, completed)
+    static let goalDataDidChange = Notification.Name("goalDataDidChange")
+}
+
 // MARK: - ========== 应用入口 ==========
 @main
 struct dreamApp: App {
@@ -33,7 +39,8 @@ struct dreamApp: App {
             Goal.self,
             Phase.self,
             DailyTask.self,
-            ChatMessage.self
+            ChatMessage.self,
+            ArchivedGoal.self
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
@@ -57,6 +64,7 @@ struct dreamApp: App {
 // MARK: - ========== 根视图 ==========
 struct RootView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         ZStack {
@@ -91,6 +99,7 @@ struct RootView: View {
                 isVisible: appState.showFloatingBanner
             )
             .zIndex(200)
+            .allowsHitTesting(false)
 
             // Task Detail Overlay
             if appState.showTaskDetail {
@@ -109,14 +118,24 @@ struct RootView: View {
             // Letter Envelope Overlay (Goal Completion Ritual)
             if appState.showLetterEnvelope {
                 LetterEnvelopeOverlay {
-                    appState.openGraduationLetter()
+                    appState.openGraduationLetter(modelContext: modelContext)
                 }
-                .zIndex(250)
+                .zIndex(350)  // Highest z-index to prevent flash
+            }
+
+            // LetterView is now presented via .fullScreenCover on HomeView
+
+            // Confetti Celebration Overlay
+            if appState.showConfetti {
+                ConfettiOverlay()
+                    .zIndex(300)
+                    .allowsHitTesting(false)
             }
         }
         .animation(.spring(response: 0.5, dampingFraction: 0.8), value: appState.showCalendar)
         .animation(.spring(response: 0.5, dampingFraction: 0.8), value: appState.showArchive)
         .animation(.easeInOut(duration: 0.8), value: appState.showSplash)
+        .animation(.easeInOut(duration: 0.3), value: appState.showConfetti)
     }
 }
 
@@ -167,6 +186,8 @@ class AppState: ObservableObject {
     @Published var currentGoalName: String?
     /// Current app phase for AI prompts
     @Published var currentPhase: AppPhase = .onboarding
+    /// Flag indicating user is restarting after completing a goal (for context-aware greetings)
+    @Published var isRestartingAfterCompletion: Bool = false
 
     // MARK: - UI Overlays & Notifications
     /// Task detail overlay state
@@ -183,6 +204,13 @@ class AppState: ObservableObject {
     /// Goal completion ritual state
     @Published var showLetterEnvelope: Bool = false
     @Published var shouldAutoRequestGraduationLetter: Bool = false
+    @Published var showLetterView: Bool = false
+    @Published var graduationLetterContent: String = ""
+    @Published var graduationLetterTitle: String = ""
+    @Published var isLoadingLetter: Bool = false  // Loading state for letter fetch
+
+    /// Celebration animation state (confetti/sparkles)
+    @Published var showConfetti: Bool = false
 
     private let calendar = Calendar.current
     private let dateFormatter: DateFormatter = {
@@ -347,7 +375,31 @@ class AppState: ObservableObject {
         return dayCompletions[key]?.completionType ?? .empty
     }
 
-    func getBubbles(for date: Date) -> [Bubble] {
+    func getBubbles(for date: Date, modelContext: ModelContext? = nil) -> [Bubble] {
+        // Try to fetch from SwiftData first (if modelContext provided)
+        if let context = modelContext {
+            // Fetch active goal (not archived)
+            var descriptor = FetchDescriptor<Goal>(
+                predicate: #Predicate { !$0.isArchived && !$0.isCompleted },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+            descriptor.fetchLimit = 1
+
+            if let activeGoal = try? context.fetch(descriptor).first {
+                // Get task for this date
+                if let task = activeGoal.getTaskForDate(date) {
+                    // Convert DailyTask to Bubble
+                    let bubble = Bubble(
+                        text: task.label,
+                        type: .core,
+                        position: CGPoint(x: 0.5, y: 0.4)
+                    )
+                    return [bubble]
+                }
+            }
+        }
+
+        // Fallback to dayCompletions dictionary (for sample data or if no SwiftData goal)
         let key = dateKey(for: date)
         return dayCompletions[key]?.bubbles ?? []
     }
@@ -483,6 +535,32 @@ class AppState: ObservableObject {
         }
     }
 
+    /// Show celebration animation (confetti/sparkles) for goal completion
+    func showCelebration() {
+        // Play haptic feedback
+        SoundManager.hapticHeavy()
+
+        // Ensure we're in witness phase
+        currentPhase = .witness
+
+        // Show confetti animation
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            showConfetti = true
+        }
+
+        // Auto-hide confetti after 3 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            withAnimation(.easeOut(duration: 0.5)) {
+                self.showConfetti = false
+            }
+        }
+
+        // Show the letter envelope after confetti has had time to be seen
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            self.triggerGoalCompletion()
+        }
+    }
+
     // MARK: - Goal Completion Ritual
 
     /// Trigger the goal completion ritual (show letter envelope)
@@ -490,11 +568,11 @@ class AppState: ObservableObject {
         withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
             showLetterEnvelope = true
         }
-        shouldAutoRequestGraduationLetter = true
+        // Note: Letter will be fetched when envelope is tapped (in openGraduationLetter)
     }
 
     /// Open the graduation letter (called when envelope is tapped)
-    func openGraduationLetter() {
+    func openGraduationLetter(modelContext: ModelContext) {
         // Hide envelope
         withAnimation(.easeOut(duration: 0.3)) {
             showLetterEnvelope = false
@@ -503,17 +581,137 @@ class AppState: ObservableObject {
         // Move to witness phase
         currentPhase = .witness
 
-        // Open chat to show graduation letter
+        // Set loading state and show LetterView immediately
+        isLoadingLetter = true
+
+        // Show letter view immediately (data will load inside)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            self.openChat()
+            self.showLetterView = true
         }
+    }
+
+    /// Fetch graduation letter content (called from LetterView.onAppear)
+    func fetchGraduationLetter(modelContext: ModelContext) async {
+        do {
+            // Fetch the completed goal to get context
+            var descriptor = FetchDescriptor<Goal>(
+                predicate: #Predicate { $0.isArchived && $0.isCompleted },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+            descriptor.fetchLimit = 1
+
+            let goalName = try? modelContext.fetch(descriptor).first?.title ?? currentGoalName
+
+            let response = try await ChatService.shared.sendMessage(
+                userText: "请为我写一封毕业信",
+                phase: .witness,
+                goalName: goalName,
+                todayTask: nil,
+                streakDays: 0,
+                context: "用户完成了全部目标任务，请生成毕业信",
+                modelContext: modelContext
+            )
+
+            await MainActor.run {
+                // Extract letter content from response
+                self.graduationLetterContent = response.text
+                self.graduationLetterTitle = "致亲爱的你"
+                self.isLoadingLetter = false
+
+                // Extract identity title from letter (look for patterns like "你已成为..." or ending titles)
+                let identityTitle = self.extractIdentityTitle(from: response.text)
+
+                // Save to Archive (ArchivedGoal)
+                if let completedGoal = try? modelContext.fetch(descriptor).first {
+                    let archivedGoal = ArchivedGoal(
+                        title: completedGoal.title,
+                        completionDate: Date(),
+                        identityTitle: identityTitle,
+                        letterContent: response.text,
+                        totalDays: completedGoal.totalDays,
+                        completedDays: completedGoal.dailyTasks.filter { $0.isCompleted }.count
+                    )
+                    modelContext.insert(archivedGoal)
+                    try? modelContext.save()
+                    print("AppState: ✅ Saved ArchivedGoal '\(completedGoal.title)' with identity '\(identityTitle)'")
+                }
+            }
+        } catch {
+            print("Failed to fetch graduation letter: \(error)")
+            // Fallback: show default message
+            await MainActor.run {
+                self.graduationLetterContent = "恭喜你完成了这段旅程！微光与你同在。"
+                self.graduationLetterTitle = "致亲爱的你"
+                self.isLoadingLetter = false
+            }
+        }
+    }
+
+    /// Extract identity title from graduation letter
+    /// Looks for patterns like "你已成为...", "成为了...", or titles at the end
+    private func extractIdentityTitle(from letterContent: String) -> String {
+        // Pattern 1: "你已成为[title]" or "成为了[title]"
+        if let range = letterContent.range(of: "你已成为|成为了|你是", options: .regularExpression) {
+            let startIndex = letterContent.index(range.upperBound, offsetBy: 0)
+            let remaining = String(letterContent[startIndex...])
+
+            // Extract until punctuation or newline
+            if let endRange = remaining.rangeOfCharacter(from: CharacterSet(charactersIn: "。，、！\n")) {
+                let title = String(remaining[..<endRange.lowerBound]).trimmingCharacters(in: .whitespaces)
+                if !title.isEmpty && title.count < 20 {
+                    return title
+                }
+            }
+        }
+
+        // Pattern 2: Look for Chinese title patterns at end (e.g., "——微光初燃者")
+        let lines = letterContent.components(separatedBy: .newlines)
+        for line in lines.reversed() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("——") || trimmed.hasPrefix("—") {
+                let title = trimmed.replacingOccurrences(of: "——", with: "")
+                    .replacingOccurrences(of: "—", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+                if !title.isEmpty && title.count < 20 {
+                    return title
+                }
+            }
+        }
+
+        // Fallback: Generic title based on goal
+        return "微光践行者"
+    }
+
+    /// Reset to onboarding phase after graduation (start new cycle)
+    func resetToOnboarding(modelContext: ModelContext) {
+        print("AppState: 🔄 Resetting to onboarding phase for new cycle")
+
+        // Clear current goal name
+        currentGoalName = nil
+
+        // Reset to Phase 1
+        currentPhase = .onboarding
+
+        // Set restart flag for context-aware greeting
+        isRestartingAfterCompletion = true
+
+        // Clear chat history to start fresh
+        ChatService.shared.clearHistory(modelContext: modelContext)
+
+        // Reload empty chat messages
+        reloadChatMessages(from: modelContext)
+
+        // Initialize welcome message for new cycle
+        initializeWelcomeMessageIfNeeded(modelContext: modelContext)
+
+        print("AppState: ✅ Reset complete - ready for new journey (restart flag set)")
     }
 
     /// Check if completing this bubble completes the goal
     func checkGoalCompletion(modelContext: ModelContext) {
-        // Fetch active goal from SwiftData
+        // Fetch active goal from SwiftData (not archived, not completed)
         var descriptor = FetchDescriptor<Goal>(
-            predicate: #Predicate { !$0.isCompleted },
+            predicate: #Predicate { !$0.isArchived && !$0.isCompleted },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         descriptor.fetchLimit = 1
@@ -1158,9 +1356,53 @@ struct HomeView: View {
             .onChange(of: appState.selectedDate) { _ in
                 reloadBubblesForCurrentMode(geometry: geometry)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .goalDataDidChange)) { notification in
+                // Goal data changed (created/updated/deleted) - refresh the view
+                print("HomeView: 🔄 Received goalDataDidChange notification - refreshing data")
+
+                // Fetch updated goal data from SwiftData (not archived)
+                let descriptor = FetchDescriptor<Goal>(
+                    predicate: #Predicate { !$0.isArchived && !$0.isCompleted },
+                    sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+                )
+
+                if let activeGoal = try? modelContext.fetch(descriptor).first {
+                    print("HomeView: ✅ Found active goal: '\(activeGoal.title)'")
+
+                    // Update app state with new goal
+                    appState.currentGoalName = activeGoal.title
+
+                    // Get today's task
+                    if let todayTask = activeGoal.getTaskForDate(Date()) {
+                        print("HomeView: ✅ Today's task: '\(todayTask.label)'")
+
+                        // Create bubble for today's task if not already completed
+                        if !todayTask.isCompleted {
+                            // Clear existing bubbles
+                            appState.bubbles.removeAll()
+
+                            // Add core bubble for today
+                            let coreBubble = Bubble(
+                                text: todayTask.label,
+                                type: .core,
+                                position: CGPoint(x: 0.5, y: 0.4)
+                            )
+                            appState.bubbles.append(coreBubble)
+
+                            // Reload bubble scene
+                            reloadBubblesForCurrentMode(geometry: geometry)
+                        }
+                    }
+                } else {
+                    print("HomeView: ⚠️ No active goal found after notification")
+                }
+            }
             .fullScreenCover(isPresented: $appState.showChat) {
                 ChatView()
                     .environmentObject(appState)
+            }
+            .fullScreenCover(isPresented: $appState.showLetterView) {
+                LetterView(appState: appState, modelContext: modelContext)
             }
         }
     }
@@ -1515,8 +1757,9 @@ struct HomeView: View {
         // Load appropriate bubbles
         loadBubblesForCurrentMode()
 
-        // Only set up interactions for non-read-only mode
-        if !isReadOnly {
+        // Set up interaction handlers based on temporal mode
+        if appState.currentTemporalMode == .today {
+            // Today: Full interactivity (tap, drag, long press)
             bubbleScene.onBubbleTapped = { bubbleId in
                 popBubble(bubbleId)
             }
@@ -1534,11 +1777,21 @@ struct HomeView: View {
                     isDraggingBubble = isDragging
                 }
             }
-        } else {
-            // Clear interaction handlers for read-only mode
+        } else if appState.currentTemporalMode == .future {
+            // Future: Long press only (view details)
             bubbleScene.onBubbleTapped = nil
             bubbleScene.onBubbleFlung = nil
-            bubbleScene.onBubbleLongPressed = nil
+            bubbleScene.onBubbleLongPressed = { bubbleId in
+                showBubbleDetail(bubbleId)
+            }
+            bubbleScene.onDragStateChanged = nil
+        } else {
+            // Past (read-only): Long press only (view details)
+            bubbleScene.onBubbleTapped = nil
+            bubbleScene.onBubbleFlung = nil
+            bubbleScene.onBubbleLongPressed = { bubbleId in
+                showBubbleDetail(bubbleId)
+            }
             bubbleScene.onDragStateChanged = nil
         }
     }
@@ -1553,8 +1806,9 @@ struct HomeView: View {
         // Load bubbles for current mode
         loadBubblesForCurrentMode()
 
-        // Update interaction handlers
-        if !isReadOnly {
+        // Update interaction handlers based on temporal mode
+        if appState.currentTemporalMode == .today {
+            // Today: Full interactivity
             bubbleScene.onBubbleTapped = { bubbleId in
                 popBubble(bubbleId)
             }
@@ -1569,10 +1823,21 @@ struct HomeView: View {
                     isDraggingBubble = isDragging
                 }
             }
-        } else {
+        } else if appState.currentTemporalMode == .future {
+            // Future: Long press only
             bubbleScene.onBubbleTapped = nil
             bubbleScene.onBubbleFlung = nil
-            bubbleScene.onBubbleLongPressed = nil
+            bubbleScene.onBubbleLongPressed = { bubbleId in
+                showBubbleDetail(bubbleId)
+            }
+            bubbleScene.onDragStateChanged = nil
+        } else {
+            // Past: Long press only
+            bubbleScene.onBubbleTapped = nil
+            bubbleScene.onBubbleFlung = nil
+            bubbleScene.onBubbleLongPressed = { bubbleId in
+                showBubbleDetail(bubbleId)
+            }
             bubbleScene.onDragStateChanged = nil
         }
     }
@@ -1585,8 +1850,8 @@ struct HomeView: View {
                 bubbleScene.addBubble(bubble: bubble)
             }
         case .past, .future:
-            // Load bubbles for the selected date
-            let dateBubbles = appState.getBubbles(for: appState.selectedDate)
+            // Load bubbles for the selected date from SwiftData
+            let dateBubbles = appState.getBubbles(for: appState.selectedDate, modelContext: modelContext)
             for bubble in dateBubbles {
                 bubbleScene.addBubble(bubble: bubble, isStatic: isReadOnly)
             }
@@ -1643,10 +1908,59 @@ struct HomeView: View {
         bubbleScene.popBubble(id: bubbleId)
         appState.completeBubble(bubble)
 
-        // Check for goal completion (Trigger A: Natural Completion)
+        // Mark the corresponding DailyTask as completed in SwiftData
+        var descriptor = FetchDescriptor<Goal>(
+            predicate: #Predicate { !$0.isArchived && !$0.isCompleted },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+
+        if let activeGoal = try? modelContext.fetch(descriptor).first,
+           let todayTask = activeGoal.getTaskForDate(Date()) {
+
+            // Mark task as completed
+            todayTask.isCompleted = true
+            try? modelContext.save()
+
+            print("HomeView: ✅ Marked DailyTask '\(todayTask.label)' as completed")
+
+            // Check if this was the last task (Trigger 2: Physical - Popping Last Bubble)
+            if todayTask.isLastTaskOfGoal {
+                print("HomeView: 🎉 Last bubble popped! Triggering Goal Completion Ritual")
+
+                // Mark remaining future tasks as completed (user finished early)
+                for task in activeGoal.dailyTasks where !task.isCompleted {
+                    task.isCompleted = true
+                }
+
+                // Mark goal as completed AND archived
+                activeGoal.isCompleted = true
+                activeGoal.isArchived = true
+                try? modelContext.save()
+
+                // Update app state to witness phase
+                self.appState.currentPhase = .witness
+
+                // Trigger the ritual (confetti + letter envelope)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.appState.showCelebration()
+                }
+            }
+        }
+
+        // Also check for natural goal completion (all tasks done on schedule)
         appState.checkGoalCompletion(modelContext: modelContext)
 
-        // Silent Narrator: Get encouragement from AI
+        // Silent Narrator: Get encouragement from AI (with guaranteed fallback)
+        let fallbackMessages = [
+            "微光虽小，但你把它点亮了。",
+            "又一颗星尘，正在汇聚成光。",
+            "做得好！保持节奏。",
+            "每一步，都是向着光的方向。",
+            "很棒！继续加油！",
+            "坚持的你，正在发光。"
+        ]
+
         Task {
             do {
                 let goalName = appState.currentGoalName
@@ -1662,14 +1976,15 @@ struct HomeView: View {
                 )
 
                 await MainActor.run {
-                    appState.showBanner(message: encouragement)
+                    // Only show if we got a valid response
+                    let message = encouragement.isEmpty ? fallbackMessages.randomElement()! : encouragement
+                    appState.showBanner(message: message)
                 }
             } catch {
                 print("Silent event error: \(error.localizedDescription)")
-                // Show fallback encouragement
+                // Show fallback encouragement (always show something)
                 await MainActor.run {
-                    let fallbackMessages = ["很棒！继续加油！", "做得好！", "又完成一个！", "保持节奏！"]
-                    appState.showBanner(message: fallbackMessages.randomElement() ?? "很棒！")
+                    appState.showBanner(message: fallbackMessages.randomElement()!)
                 }
             }
         }
@@ -1677,11 +1992,6 @@ struct HomeView: View {
 
     private func snoozeBubble(_ bubbleId: UUID) {
         guard let bubble = appState.bubbles.first(where: { $0.id == bubbleId }) else { return }
-
-        snoozeHintText = "「\(bubble.text)」已转为明日待办"
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-            showSnoozeHint = true
-        }
 
         // Remove bubble from scene with animation
         bubbleScene.removeBubble(bubbleId, animated: true)
@@ -1691,6 +2001,47 @@ struct HomeView: View {
 
         // Haptic feedback for successful transfer
         SoundManager.hapticMedium()
+
+        // Silent Narrator: Get encouragement for postponing (with fallback)
+        let fallbackMessages = [
+            "允许暂停，也是一种前进。",
+            "明天的你，会感谢今天的安排。",
+            "休息是为了走更远的路。",
+            "调整节奏，不是放弃。",
+            "给自己一些喘息的空间。"
+        ]
+
+        Task {
+            do {
+                let goalName = appState.currentGoalName
+                let todayTask = appState.getTodayTask()
+                let streakDays = appState.calculateStreakDays()
+
+                let encouragement = try await ChatService.shared.sendSilentEvent(
+                    trigger: "delay",
+                    goalName: goalName,
+                    todayTask: todayTask,
+                    streakDays: streakDays,
+                    context: "用户将任务「\(bubble.text)」推迟到明天"
+                )
+
+                await MainActor.run {
+                    let message = encouragement.isEmpty ? fallbackMessages.randomElement()! : encouragement
+                    appState.showBanner(message: message)
+                }
+            } catch {
+                print("Silent event (delay) error: \(error.localizedDescription)")
+                await MainActor.run {
+                    appState.showBanner(message: fallbackMessages.randomElement()!)
+                }
+            }
+        }
+
+        // Also show the snooze hint UI
+        snoozeHintText = "「\(bubble.text)」已转为明日待办"
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            showSnoozeHint = true
+        }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             withAnimation {
@@ -2467,7 +2818,6 @@ struct ChatView: View {
     @State private var inputText = ""
     @State private var isThinking = false
     @State private var dragOffset: CGFloat = 0
-    @State private var isKeyboardVisible = false
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -2482,58 +2832,17 @@ struct ChatView: View {
 
             VStack(spacing: 0) {
                 // MARK: - Navigation Header
-                HStack {
-                    // Empty space for balance
-                    Color.clear.frame(width: 50, height: 44)
-
-                    Spacer()
-
-                    // Title
-                    Text("Lumi")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(Color(hex: "5C5C5C"))
-
-                    Spacer()
-
-                    // Done button - standard iOS style
-                    Button(action: dismissChat) {
-                        Text("完成")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundColor(Color(hex: "5C5C5C"))
-                    }
-                    .frame(width: 50, height: 44)
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-                .background(Color(hex: "FFF9E6").opacity(0.95))
+                chatNavigationHeader
 
                 Divider()
                     .background(Color(hex: "E0DCD4"))
 
-                // MARK: - Message List
+                // MARK: - Message List with safeAreaInset for Input Bar
                 ScrollViewReader { scrollProxy in
                     ScrollView {
                         LazyVStack(spacing: 16) {
                             ForEach(appState.chatMessages) { message in
-                                // Check if message contains a blueprint (parsed JSON)
-                                if !message.isUser, let blueprint = extractBlueprintFromMessage(message.content) {
-                                    ContractCard(blueprint: blueprint) {
-                                        // Send confirmation
-                                        sendConfirmation()
-                                    }
-                                    .id(message.id)
-                                } else if !message.isUser && isDraftPreview(message.content) {
-                                    // Render draft as styled card (before JSON is generated)
-                                    DraftPreviewCard(content: message.content)
-                                        .id(message.id)
-                                } else if !message.isUser && containsJSONCodeBlock(message.content) {
-                                    // Hide raw JSON, show processing card
-                                    ContractStatusCard()
-                                        .id(message.id)
-                                } else {
-                                    ChatMessageRow(message: message)
-                                        .id(message.id)
-                                }
+                                messageView(for: message)
                             }
 
                             // Typing Indicator
@@ -2541,75 +2850,42 @@ struct ChatView: View {
                                 TypingIndicatorRow()
                                     .id("typing")
                             }
+
+                            // Bottom anchor for scrolling
+                            Color.clear
+                                .frame(height: 1)
+                                .id("bottomAnchor")
                         }
                         .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
+                        .padding(.top, 12)
+                        .padding(.bottom, 8)
                     }
+                    .defaultScrollAnchor(.bottom)
                     .scrollDismissesKeyboard(.interactively)
-                    .onChange(of: appState.chatMessages.count) { _ in
-                        // Delay scroll to avoid glitch
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            scrollToBottom(proxy: scrollProxy)
-                        }
+                    .onChange(of: appState.chatMessages.count) { _, _ in
+                        scrollToBottom(proxy: scrollProxy)
                     }
-                    .onChange(of: isThinking) { _ in
-                        // Delay scroll to avoid glitch
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            scrollToBottom(proxy: scrollProxy)
-                        }
+                    .onChange(of: isThinking) { _, _ in
+                        scrollToBottom(proxy: scrollProxy)
                     }
-                    .onChange(of: isKeyboardVisible) { visible in
-                        // Delay scroll to avoid keyboard animation glitch
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            scrollToBottom(proxy: scrollProxy)
-                        }
+                    .safeAreaInset(edge: .bottom) {
+                        // Input bar automatically rides on top of keyboard
+                        chatInputBar
                     }
-                }
-
-                // MARK: - Input Bar
-                VStack(spacing: 0) {
-                    Divider()
-                        .background(Color(hex: "E0DCD4"))
-
-                    HStack(spacing: 12) {
-                        TextField("说说你的想法...", text: $inputText)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 20)
-                                    .fill(Color.white.opacity(0.8))
-                            )
-                            .focused($isInputFocused)
-
-                        Button(action: sendMessage) {
-                            Image(systemName: "arrow.up")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(.white)
-                                .frame(width: 36, height: 36)
-                                .background(
-                                    Circle()
-                                        .fill(inputText.isEmpty ? Color(hex: "CBA972").opacity(0.4) : Color(hex: "CBA972"))
-                                )
-                        }
-                        .disabled(inputText.isEmpty)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 10)
-                    .padding(.bottom, 34) // Safe area bottom padding
-                    .background(Color(hex: "FFF9E6").opacity(0.95))
                 }
             }
         }
         .offset(y: dragOffset)
         .gesture(
-            isKeyboardVisible ? nil : DragGesture()
+            DragGesture()
                 .onChanged { value in
-                    if value.translation.height > 0 {
+                    // Only allow downward drag when keyboard is hidden
+                    if !isInputFocused && value.translation.height > 0 {
                         dragOffset = value.translation.height * 0.5
                     }
                 }
                 .onEnded { value in
-                    if value.translation.height > 100 {
+                    if value.translation.height > 100 && !isInputFocused {
                         dismissChat()
                     } else {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
@@ -2619,7 +2895,6 @@ struct ChatView: View {
                 }
         )
         .onAppear {
-            setupKeyboardObservers()
             // Initialize welcome message if chat history is empty
             appState.initializeWelcomeMessageIfNeeded(modelContext: modelContext)
             // Load chat messages from SwiftData
@@ -2631,17 +2906,131 @@ struct ChatView: View {
                 requestGraduationLetter()
             }
         }
-        .onDisappear {
-            removeKeyboardObservers()
+    }
+
+    // MARK: - Navigation Header
+    private var chatNavigationHeader: some View {
+        HStack {
+            // Drag handle hint
+            RoundedRectangle(cornerRadius: 2.5)
+                .fill(Color(hex: "CCCCCC"))
+                .frame(width: 36, height: 5)
+                .opacity(0.6)
+
+            Spacer()
+
+            // Title
+            Text("Lumi")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(Color(hex: "5C5C5C"))
+
+            Spacer()
+
+            // Done button - standard iOS style
+            Button(action: dismissChat) {
+                Text("完成")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(Color(hex: "5C5C5C"))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color(hex: "FFF9E6").opacity(0.95))
+    }
+
+    // MARK: - Input Bar (iMessage Style)
+    private var chatInputBar: some View {
+        VStack(spacing: 0) {
+            Divider()
+                .background(Color(hex: "E0DCD4"))
+
+            HStack(spacing: 10) {
+                // Capsule text field
+                TextField("说说你的想法...", text: $inputText, axis: .vertical)
+                    .lineLimit(1...5)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(
+                        Capsule()
+                            .fill(Color.white)
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color(hex: "E0DCD4"), lineWidth: 1)
+                            )
+                    )
+                    .focused($isInputFocused)
+                    .submitLabel(.send)
+                    .onSubmit {
+                        if !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            sendMessage()
+                        }
+                    }
+
+                // Send button - SF Symbol arrow.up.circle.fill
+                Button(action: {
+                    sendMessage()
+                }) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 32))
+                        .foregroundColor(
+                            inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? Color(hex: "CBA972").opacity(0.4)
+                                : Color(hex: "CBA972")
+                        )
+                }
+                .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .background(.ultraThinMaterial)
+    }
+
+    // MARK: - Message View Builder
+    @ViewBuilder
+    private func messageView(for message: ChatMessage) -> some View {
+        if !message.isUser, let blueprint = extractBlueprintFromMessage(message.content) {
+            // Successfully parsed blueprint - show contract card
+            ContractCard(blueprint: blueprint) {
+                sendConfirmation()
+            }
+            .id(message.id)
+        } else if !message.isUser && isDraftPreview(message.content) {
+            // Draft preview (before JSON generation)
+            DraftPreviewCard(content: message.content)
+                .id(message.id)
+        } else if !message.isUser && containsJSONCodeBlock(message.content) {
+            // JSON detected - check if parsing failed
+            let parseResult = JSONParser.extractGoalBlueprintWithResult(from: message.content)
+            switch parseResult {
+            case .success(let blueprint):
+                ContractCard(blueprint: blueprint) {
+                    sendConfirmation()
+                }
+                .id(message.id)
+            case .failure(let errorMsg):
+                ContractErrorCard(errorMessage: errorMsg) {
+                    inputText = "请重新生成愿景契约"
+                    sendMessage()
+                }
+                .id(message.id)
+            }
+        } else {
+            // Regular message
+            ChatMessageRow(message: message)
+                .id(message.id)
         }
     }
 
+    // MARK: - Helper Functions
     private func scrollToBottom(proxy: ScrollViewProxy) {
-        withAnimation(.easeOut(duration: 0.2)) {
-            if isThinking {
-                proxy.scrollTo("typing", anchor: .bottom)
-            } else if let lastMessage = appState.chatMessages.last {
-                proxy.scrollTo(lastMessage.id, anchor: .bottom)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            withAnimation(.easeOut(duration: 0.2)) {
+                if isThinking {
+                    proxy.scrollTo("typing", anchor: .bottom)
+                } else {
+                    proxy.scrollTo("bottomAnchor", anchor: .bottom)
+                }
             }
         }
     }
@@ -2654,6 +3043,12 @@ struct ChatView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             dismiss()
             appState.closeChat()
+
+            // If we just showed a graduation letter (witness phase), reset to onboarding
+            if self.appState.currentPhase == .witness {
+                print("ChatView: Graduation letter dismissed - resetting to onboarding")
+                self.appState.resetToOnboarding(modelContext: self.modelContext)
+            }
         }
     }
 
@@ -2673,27 +3068,43 @@ struct ChatView: View {
                 let todayTask = appState.getTodayTask()
                 let streakDays = appState.calculateStreakDays()
 
+                // Build context string with restart flag if applicable
+                var contextString = ""
+                if appState.currentPhase == .onboarding && appState.isRestartingAfterCompletion {
+                    contextString = "User just finished a goal and is restarting. Skip the long introduction and welcome them back warmly."
+                    // Clear the flag after using it once
+                    appState.isRestartingAfterCompletion = false
+                }
+
                 let response = try await ChatService.shared.sendMessage(
                     userText: messageText,
                     phase: appState.currentPhase,
                     goalName: goalName,
                     todayTask: todayTask,
                     streakDays: streakDays,
-                    context: "",
+                    context: contextString,
                     modelContext: modelContext
                 )
 
                 await MainActor.run {
                     isThinking = false
 
+                    // INTERCEPT: Check for action commands in the response BEFORE showing to user
+                    if let actionResponse = JSONParser.extractAction(from: response.text) {
+                        handleActionCommand(actionResponse)
+                    }
+
                     // Reload chat messages from SwiftData
                     appState.reloadChatMessages(from: modelContext)
 
-                    // If a new goal was created, update app state
+                    // If a new goal was created, update app state and refresh HomeView
                     if let goal = response.createdGoal {
                         appState.currentGoalName = goal.title
                         appState.currentPhase = .companion // Move to companion phase
                         print("ChatView: New goal created - '\(goal.title)'")
+
+                        // Post notification to refresh HomeView with new goal data
+                        NotificationCenter.default.post(name: .goalDataDidChange, object: nil)
                     }
 
                     // Handle extracted JSON if present (for legacy support)
@@ -2749,6 +3160,150 @@ struct ChatView: View {
         }
     }
 
+    /// Handle action commands extracted from AI response
+    private func handleActionCommand(_ actionResponse: AIActionResponse) {
+        print("ChatView: Handling action command: \(actionResponse.action)")
+
+        switch actionResponse.action {
+        case "trigger_phase_3_completion":
+            // User completed the goal early!
+            print("ChatView: 🎉 Triggering Phase 3 completion celebration")
+
+            // 1. Mark remaining tasks as done and finish goal (FIRST, before animations)
+            finishCurrentGoal()
+
+            // 2. Close chat view first to show the full celebration
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                self.dismissChat()
+            }
+
+            // 3. Show confetti + envelope celebration (after chat closes)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.appState.showCelebration()
+            }
+
+            // 4. Set flag for graduation letter to be requested when envelope is opened
+            // (handled by triggerGoalCompletion() inside showCelebration())
+
+        case "update_today_task":
+            // User requested task adjustment
+            if let newLabel = actionResponse.newTaskLabel {
+                print("ChatView: Updating today's task to: \(newLabel)")
+                updateTodayTask(newLabel: newLabel)
+            }
+
+        case "reset_goal":
+            // User wants to start over
+            print("ChatView: Resetting current goal")
+            resetCurrentGoal()
+
+        default:
+            print("ChatView: Unknown action: \(actionResponse.action)")
+        }
+    }
+
+    /// Finish the current goal - mark all remaining tasks as done and archive it
+    private func finishCurrentGoal() {
+        // Fetch active goal (not archived, not completed)
+        var descriptor = FetchDescriptor<Goal>(
+            predicate: #Predicate { !$0.isArchived && !$0.isCompleted },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+
+        guard let activeGoal = try? modelContext.fetch(descriptor).first else {
+            print("ChatView: No active goal to finish")
+            return
+        }
+
+        // Mark all remaining tasks as completed
+        for task in activeGoal.dailyTasks where !task.isCompleted {
+            task.isCompleted = true
+        }
+
+        // Mark goal as completed AND archived
+        activeGoal.isCompleted = true
+        activeGoal.isArchived = true
+
+        // Save changes
+        do {
+            try modelContext.save()
+            print("ChatView: ✅ Goal '\(activeGoal.title)' marked as completed and archived")
+        } catch {
+            print("ChatView: ❌ Failed to save goal completion: \(error)")
+        }
+
+        // Update app state (keep in witness phase until letter is shown)
+        appState.currentPhase = .witness
+
+        // Post notification for UI updates
+        NotificationCenter.default.post(name: .goalDataDidChange, object: nil)
+    }
+
+    /// Update today's task with a new label
+    private func updateTodayTask(newLabel: String) {
+        // Fetch active goal (not archived)
+        var descriptor = FetchDescriptor<Goal>(
+            predicate: #Predicate { !$0.isArchived && !$0.isCompleted },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+
+        guard let activeGoal = try? modelContext.fetch(descriptor).first,
+              let todayTask = activeGoal.getTaskForDate(Date()) else {
+            print("ChatView: No active goal or today's task to update")
+            return
+        }
+
+        // Update the task label
+        todayTask.label = newLabel
+
+        // Save changes
+        do {
+            try modelContext.save()
+            print("ChatView: ✅ Updated today's task to: \(newLabel)")
+        } catch {
+            print("ChatView: ❌ Failed to update today's task: \(error)")
+        }
+
+        // Post notification for UI updates
+        NotificationCenter.default.post(name: .goalDataDidChange, object: nil)
+    }
+
+    /// Reset the current goal (delete it and return to onboarding)
+    private func resetCurrentGoal() {
+        // Fetch active goal (not archived)
+        var descriptor = FetchDescriptor<Goal>(
+            predicate: #Predicate { !$0.isArchived && !$0.isCompleted },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+
+        guard let activeGoal = try? modelContext.fetch(descriptor).first else {
+            print("ChatView: No active goal to reset")
+            return
+        }
+
+        // Delete the goal
+        modelContext.delete(activeGoal)
+
+        // Save changes
+        do {
+            try modelContext.save()
+            print("ChatView: ✅ Goal deleted, returning to onboarding")
+        } catch {
+            print("ChatView: ❌ Failed to delete goal: \(error)")
+        }
+
+        // Reset app state
+        appState.currentGoalName = nil
+        appState.currentPhase = .onboarding
+        appState.isRestartingAfterCompletion = true  // Set restart flag for context-aware greeting
+
+        // Post notification for UI updates
+        NotificationCenter.default.post(name: .goalDataDidChange, object: nil)
+    }
+
     /// Extract GoalBlueprint from message content
     private func extractBlueprintFromMessage(_ content: String) -> GoalBlueprint? {
         return JSONParser.extractGoalBlueprint(from: content)
@@ -2775,12 +3330,8 @@ struct ChatView: View {
 
     /// Check if message contains JSON code block
     private func containsJSONCodeBlock(_ content: String) -> Bool {
-        // Case-insensitive check for ```json
-        let pattern = "```(?i)json"
-        if let _ = content.range(of: pattern, options: .regularExpression) {
-            return true
-        }
-        return false
+        // Use the robust JSONParser method
+        return JSONParser.containsJSON(content)
     }
 
     /// Send confirmation message
@@ -2832,24 +3383,21 @@ struct ChatView: View {
         }
     }
 
-    private func setupKeyboardObservers() {
-        NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillShowNotification, object: nil, queue: .main) { _ in
-            isKeyboardVisible = true
-        }
-        NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { _ in
-            isKeyboardVisible = false
-        }
-    }
-
-    private func removeKeyboardObservers() {
-        NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillShowNotification, object: nil)
-        NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillHideNotification, object: nil)
-    }
 }
 
 // MARK: - Chat Message Row
 struct ChatMessageRow: View {
     let message: ChatMessage
+
+    /// Get cleaned display text - strips JSON from AI messages
+    private var displayContent: String {
+        if message.isUser {
+            return message.content
+        } else {
+            // Strip JSON from AI responses for clean display
+            return JSONParser.stripJSON(from: message.content)
+        }
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -2860,8 +3408,8 @@ struct ChatMessageRow: View {
                 LumiMiniAvatar(isThinking: false, size: 36)
             }
 
-            // Message Bubble
-            Text(message.content)
+            // Message Bubble - use cleaned display content
+            Text(displayContent)
                 .font(.system(size: 15))
                 .foregroundColor(message.isUser ? .white : Color(hex: "3C3C3C"))
                 .padding(.horizontal, 14)
@@ -3466,6 +4014,7 @@ struct CalendarDay: Identifiable {
 
 struct CalendarView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.modelContext) private var modelContext
     @Namespace private var calendarAnimation
 
     let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 7)
@@ -3523,7 +4072,10 @@ struct CalendarView: View {
                             CalendarDayCell(
                                 day: day,
                                 namespace: calendarAnimation,
-                                isSelected: selectedDayForTransition?.id == day.id
+                                isSelected: selectedDayForTransition?.id == day.id,
+                                onLongPress: {
+                                    showDayTaskDetail(day)
+                                }
                             )
                             .onTapGesture {
                                 handleDayTap(day)
@@ -3619,6 +4171,65 @@ struct CalendarView: View {
         appState.closeCalendar()
     }
 
+    /// Show task detail overlay for a specific day (long press)
+    private func showDayTaskDetail(_ day: CalendarDay) {
+        // Get bubbles for this day from SwiftData
+        let bubbles = appState.getBubbles(for: day.date, modelContext: modelContext)
+
+        // Build task description from bubbles
+        var taskDescription = ""
+        var phaseName = ""
+        var color = "FFD700"
+
+        if day.isFuture {
+            phaseName = "计划中"
+            color = "87CEEB"
+            if bubbles.isEmpty {
+                taskDescription = "这一天还没有安排任务。"
+            } else {
+                let taskTexts = bubbles.map { "• \($0.text)" }.joined(separator: "\n")
+                taskDescription = "已规划的任务：\n\n\(taskTexts)"
+            }
+        } else if day.isPast {
+            switch day.completionType {
+            case .coreCompleted:
+                phaseName = "已完成 ✨"
+                color = "FFD700"
+                let taskTexts = bubbles.map { "• \($0.text)" }.joined(separator: "\n")
+                taskDescription = bubbles.isEmpty ? "这一天完成了核心任务！" : "完成的任务：\n\n\(taskTexts)"
+            case .choreOnly:
+                phaseName = "小进步"
+                color = "CBA972"
+                let taskTexts = bubbles.map { "• \($0.text)" }.joined(separator: "\n")
+                taskDescription = bubbles.isEmpty ? "这一天完成了一些小任务。" : "完成的任务：\n\n\(taskTexts)"
+            case .empty:
+                phaseName = "休息日"
+                color = "888888"
+                taskDescription = "这一天没有记录到任务。"
+            }
+        } else {
+            // Today - shouldn't normally be triggered from calendar
+            phaseName = "今天"
+            color = "FFD700"
+            let taskTexts = bubbles.map { "• \($0.text)" }.joined(separator: "\n")
+            taskDescription = bubbles.isEmpty ? "今天的任务还没有设置。" : "今天的任务：\n\n\(taskTexts)"
+        }
+
+        // Format date
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "M月d日"
+        dateFormatter.locale = Locale(identifier: "zh_Hans")
+        let dateString = dateFormatter.string(from: day.date)
+
+        // Show the overlay
+        appState.showTaskDetailOverlay(
+            goalTitle: dateString,
+            phaseName: phaseName,
+            description: taskDescription,
+            color: color
+        )
+    }
+
     private var monthYearString: String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy年 M月"
@@ -3649,7 +4260,7 @@ struct CalendarView: View {
                 isPast: appState.isPast(currentDate),
                 isFuture: appState.isFuture(currentDate),
                 completionType: appState.getCompletionType(for: currentDate),
-                hasBubbles: !appState.getBubbles(for: currentDate).isEmpty
+                hasBubbles: !appState.getBubbles(for: currentDate, modelContext: modelContext).isEmpty
             )
 
             days.append(day)
@@ -3690,6 +4301,7 @@ struct CalendarDayCell: View {
     let day: CalendarDay
     let namespace: Namespace.ID
     let isSelected: Bool
+    var onLongPress: (() -> Void)? = nil
 
     @State private var pulseScale: CGFloat = 1.0
     @State private var rotationAngle: Double = 0
@@ -3716,6 +4328,13 @@ struct CalendarDayCell: View {
         .matchedGeometryEffect(id: day.id, in: namespace, isSource: !isSelected)
         .scaleEffect(isSelected ? 8 : 1)
         .opacity(isSelected ? 0 : 1)
+        .onLongPressGesture(minimumDuration: 0.5) {
+            // Trigger for all days: today with bubbles, future with bubbles, or past with completed tasks
+            if (day.isToday && day.hasBubbles) || (day.isFuture && day.hasBubbles) || (day.isPast && day.completionType != .empty) {
+                SoundManager.hapticLight()
+                onLongPress?()
+            }
+        }
     }
 
     // MARK: - Today View (Rainbow Breathing - The Gold Standard)
@@ -3992,11 +4611,13 @@ struct StarField: View {
 // MARK: - ========== 5. L5 "Luminous Echo" - The Sanctuary (Archive View with Atmosphere & Flashlight) ==========
 struct ArchiveView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.modelContext) private var modelContext
     @State private var selectedGoal: CompletedGoal?
     @State private var showOverlay = false
+    @State private var archivedGoals: [ArchivedGoal] = []
 
-    // 示例完成目标（稍后替换为 SwiftData）
-    private let completedGoals: [CompletedGoal] = [
+    // Fallback: 示例完成目标（如果没有真实数据）
+    private let sampleGoals: [CompletedGoal] = [
         CompletedGoal(
             title: "完成第一本小说",
             aiWitnessText: "日复一日的书写中，碎片化的想法逐渐凝聚成完整的故事。",
@@ -4043,6 +4664,33 @@ struct ArchiveView: View {
 
     // Horizontal scatter offsets for irregular layout
     private let scatterOffsets: [CGFloat] = [-80, 60, -40, 70, -60, 50]
+
+    // Computed property: Convert ArchivedGoals to CompletedGoal format for display
+    private var completedGoals: [CompletedGoal] {
+        let converted = archivedGoals.enumerated().map { index, archived in
+            let season = seasonString(from: archived.completionDate)
+            let yPosition = Double(index) * 0.15
+            let colors: [Color] = [
+                Color(hex: "FFD700"), // Gold
+                Color(hex: "87CEEB"), // Sky Blue
+                Color(hex: "DDA0DD"), // Plum
+                Color(hex: "CBA972"), // Bronze
+                Color(hex: "FFB6C1"), // Light Pink
+                Color(hex: "98D8C8")  // Mint
+            ]
+
+            return CompletedGoal(
+                title: archived.title,
+                aiWitnessText: archived.identityTitle,
+                season: season,
+                position: CGPoint(x: 0.5, y: yPosition),
+                color: colors[index % colors.count]
+            )
+        }
+
+        // If no archived goals, show sample goals
+        return converted.isEmpty ? sampleGoals : converted
+    }
 
     var body: some View {
         ZStack {
@@ -4139,6 +4787,38 @@ struct ArchiveView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
             }
         }
+        .onAppear {
+            loadArchivedGoals()
+        }
+    }
+
+    // Load archived goals from SwiftData
+    private func loadArchivedGoals() {
+        let descriptor = FetchDescriptor<ArchivedGoal>(
+            sortBy: [SortDescriptor(\.completionDate, order: .reverse)]
+        )
+
+        if let goals = try? modelContext.fetch(descriptor) {
+            archivedGoals = goals
+            print("ArchiveView: Loaded \(goals.count) archived goals")
+        }
+    }
+
+    // Helper to format date to season
+    private func seasonString(from date: Date) -> String {
+        let calendar = Calendar.current
+        let year = calendar.component(.year, from: date)
+        let month = calendar.component(.month, from: date)
+
+        let season: String
+        switch month {
+        case 12, 1, 2: season = "冬"
+        case 3, 4, 5: season = "春"
+        case 6, 7, 8: season = "夏"
+        default: season = "秋"
+        }
+
+        return "\(year) \(season)"
     }
 }
 
@@ -4634,6 +5314,70 @@ struct ContractStatusCard: View {
     }
 }
 
+// MARK: - Contract Error Card (JSON Parse Failed)
+struct ContractErrorCard: View {
+    let errorMessage: String
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            // Error Icon
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 40))
+                .foregroundColor(Color(hex: "FF6B6B"))
+
+            // Error text
+            VStack(spacing: 8) {
+                Text("契约解析失败")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(Color(hex: "3C3C3C"))
+
+                Text(errorMessage)
+                    .font(.system(size: 14))
+                    .foregroundColor(Color(hex: "8B8B8B"))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+            }
+
+            // Retry button
+            Button(action: onRetry) {
+                Text("重新生成")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 10)
+                    .background(
+                        Capsule()
+                            .fill(Color(hex: "CBA972"))
+                    )
+            }
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 32)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    Color(hex: "FF6B6B").opacity(0.4),
+                                    Color(hex: "FFB5B5").opacity(0.3)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1.5
+                        )
+                )
+        )
+        .shadow(color: Color(hex: "FF6B6B").opacity(0.1), radius: 15, x: 0, y: 5)
+        .padding(.horizontal, 16)
+    }
+}
+
 // MARK: - Contract Card (Blueprint Message)
 struct ContractCard: View {
     let blueprint: GoalBlueprint
@@ -4857,6 +5601,274 @@ struct LetterEnvelopeOverlay: View {
                 .repeatForever(autoreverses: true)
             ) {
                 glowIntensity = 1.0
+            }
+        }
+    }
+}
+
+// MARK: - ========== Letter View (Graduation Letter Display) ==========
+struct LetterView: View {
+    @ObservedObject var appState: AppState
+    let modelContext: ModelContext
+
+    @State private var scale: CGFloat = 0.5
+    @State private var opacity: Double = 0
+    @State private var cardRotation: Double = -10
+
+    var body: some View {
+        ZStack {
+            // Dark overlay background
+            Color.black.opacity(0.85)
+                .ignoresSafeArea()
+
+            // Loading indicator or letter content
+            if appState.isLoadingLetter {
+                VStack(spacing: 20) {
+                    ProgressView()
+                        .scaleEffect(1.5)
+                        .tint(Color(hex: "CBA972"))
+
+                    Text("正在生成你的信...")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(Color(hex: "CBA972"))
+                }
+            } else {
+                // Paper-texture card
+                letterCard
+            }
+        }
+        .contentShape(Rectangle())  // Make entire screen tappable
+        .onTapGesture {
+            if !appState.isLoadingLetter {
+                dismissLetter()
+            }
+        }
+        .onAppear {
+            // Entrance animation
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.7)) {
+                scale = 1.0
+                opacity = 1.0
+                cardRotation = 0
+            }
+
+            // Fetch letter content if not already loaded
+            if appState.graduationLetterContent.isEmpty {
+                Task {
+                    await appState.fetchGraduationLetter(modelContext: modelContext)
+                }
+            }
+        }
+    }
+
+    private var letterCard: some View {
+        VStack(spacing: 0) {
+                // Letter title
+                Text(appState.graduationLetterTitle)
+                    .font(.system(size: 24, weight: .bold, design: .serif))
+                    .foregroundColor(Color(hex: "8B4513"))
+                    .padding(.top, 40)
+                    .padding(.bottom, 20)
+
+                // Decorative line
+                Divider()
+                    .frame(width: 200)
+                    .background(Color(hex: "CBA972").opacity(0.3))
+                    .padding(.bottom, 30)
+
+                // Letter content
+                ScrollView {
+                    Text(appState.graduationLetterContent)
+                        .font(.system(size: 16, weight: .regular, design: .serif))
+                        .foregroundColor(Color(hex: "4A4A4A"))
+                        .lineSpacing(8)
+                        .multilineTextAlignment(.leading)
+                        .padding(.horizontal, 30)
+                }
+                .frame(maxHeight: 400)
+
+                // Tap hint
+                Text("轻触任意处继续")
+                    .font(.system(size: 14, weight: .light))
+                    .foregroundColor(Color(hex: "8B8B8B"))
+                    .padding(.top, 30)
+                    .padding(.bottom, 40)
+            }
+            .frame(maxWidth: 350)
+            .background(
+                ZStack {
+                    // Paper texture background
+                    LinearGradient(
+                        colors: [
+                            Color(hex: "FFF8E7"),
+                            Color(hex: "FFEFD5"),
+                            Color(hex: "FFF8E7")
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+
+                    // Subtle paper grain overlay
+                    Color.white.opacity(0.1)
+                        .blendMode(.overlay)
+                }
+            )
+            .cornerRadius(20)
+            .shadow(color: Color.black.opacity(0.3), radius: 30, x: 0, y: 15)
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                Color(hex: "CBA972").opacity(0.6),
+                                Color(hex: "D4AF37").opacity(0.3)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .scaleEffect(scale)
+            .opacity(opacity)
+            .rotation3DEffect(
+                .degrees(cardRotation),
+                axis: (x: 1, y: 0, z: 0),
+                perspective: 0.5
+            )
+    }
+
+    private func dismissLetter() {
+        SoundManager.hapticLight()
+
+        // Exit animation
+        withAnimation(.easeOut(duration: 0.3)) {
+            scale = 0.8
+            opacity = 0
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            // Close letter view
+            appState.showLetterView = false
+
+            // Add transition message to chat
+            let transitionMessage = ChatMessage(
+                content: "（信已收好）\n\n休息得怎么样？当你准备好开始下一段旅程时，随时告诉我。",
+                isUser: false
+            )
+            modelContext.insert(transitionMessage)
+            try? modelContext.save()
+            appState.reloadChatMessages(from: modelContext)
+
+            // Open chat after a brief delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                appState.openChat()
+            }
+        }
+    }
+}
+
+// MARK: - ========== 庆祝动画 (Confetti Overlay) ==========
+struct ConfettiOverlay: View {
+    @State private var particles: [ConfettiParticle] = []
+
+    private let colors: [Color] = [
+        Color(hex: "FFD700"), // Gold
+        Color(hex: "FF6B9D"), // Pink
+        Color(hex: "C77DFF"), // Purple
+        Color(hex: "4CC9F0"), // Cyan
+        Color(hex: "7FE3A0"), // Green
+        Color(hex: "FF9770"), // Orange
+        Color(hex: "FFEE58")  // Yellow
+    ]
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                ForEach(particles) { particle in
+                    ConfettiPiece(particle: particle)
+                }
+            }
+            .onAppear {
+                createParticles(in: geometry.size)
+            }
+        }
+        .ignoresSafeArea()
+    }
+
+    private func createParticles(in size: CGSize) {
+        particles = (0..<100).map { index in
+            ConfettiParticle(
+                id: index,
+                color: colors[Int.random(in: 0..<colors.count)],
+                startX: CGFloat.random(in: 0...size.width),
+                startY: -20,
+                endX: CGFloat.random(in: -100...size.width + 100),
+                endY: size.height + 50,
+                rotation: Double.random(in: 0...720),
+                scale: CGFloat.random(in: 0.5...1.2),
+                duration: Double.random(in: 2.0...3.5),
+                delay: Double.random(in: 0...0.5)
+            )
+        }
+    }
+}
+
+struct ConfettiParticle: Identifiable {
+    let id: Int
+    let color: Color
+    let startX: CGFloat
+    let startY: CGFloat
+    let endX: CGFloat
+    let endY: CGFloat
+    let rotation: Double
+    let scale: CGFloat
+    let duration: Double
+    let delay: Double
+}
+
+struct ConfettiPiece: View {
+    let particle: ConfettiParticle
+
+    @State private var position: CGPoint
+    @State private var currentRotation: Double = 0
+    @State private var opacity: Double = 1.0
+
+    init(particle: ConfettiParticle) {
+        self.particle = particle
+        self._position = State(initialValue: CGPoint(x: particle.startX, y: particle.startY))
+    }
+
+    var body: some View {
+        // Random shape: rectangle or circle
+        Group {
+            if particle.id % 3 == 0 {
+                Rectangle()
+                    .fill(particle.color)
+                    .frame(width: 8 * particle.scale, height: 12 * particle.scale)
+            } else if particle.id % 3 == 1 {
+                Circle()
+                    .fill(particle.color)
+                    .frame(width: 10 * particle.scale, height: 10 * particle.scale)
+            } else {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(particle.color)
+                    .frame(width: 6 * particle.scale, height: 10 * particle.scale)
+            }
+        }
+        .rotationEffect(.degrees(currentRotation))
+        .position(position)
+        .opacity(opacity)
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + particle.delay) {
+                withAnimation(.easeIn(duration: particle.duration)) {
+                    position = CGPoint(x: particle.endX, y: particle.endY)
+                    currentRotation = particle.rotation
+                }
+
+                // Fade out near the end
+                withAnimation(.easeIn(duration: particle.duration * 0.8).delay(particle.duration * 0.5)) {
+                    opacity = 0
+                }
             }
         }
     }

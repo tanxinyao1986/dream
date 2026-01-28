@@ -440,32 +440,8 @@ final class ChatService {
 extension ChatResponse {
     /// Get the display text (removes JSON code blocks for cleaner display)
     var displayText: String {
-        // Remove markdown code blocks for display
-        var cleanText = text
-
-        // Remove ```json ... ``` blocks
-        let jsonBlockPattern = "```json\\s*\\n[\\s\\S]*?\\n```"
-        if let regex = try? NSRegularExpression(pattern: jsonBlockPattern, options: .caseInsensitive) {
-            cleanText = regex.stringByReplacingMatches(
-                in: cleanText,
-                options: [],
-                range: NSRange(location: 0, length: cleanText.utf16.count),
-                withTemplate: ""
-            )
-        }
-
-        // Remove ``` ... ``` blocks that look like JSON
-        let codeBlockPattern = "```\\s*\\n\\s*\\{[\\s\\S]*?\\}\\s*\\n```"
-        if let regex = try? NSRegularExpression(pattern: codeBlockPattern, options: .caseInsensitive) {
-            cleanText = regex.stringByReplacingMatches(
-                in: cleanText,
-                options: [],
-                range: NSRange(location: 0, length: cleanText.utf16.count),
-                withTemplate: ""
-            )
-        }
-
-        return cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Use JSONParser's robust stripping method
+        return JSONParser.stripJSON(from: text)
     }
 
     /// Try to get bubbles array from extracted JSON
