@@ -383,13 +383,20 @@ final class ChatService {
                     if let chunkData = dataContent.data(using: .utf8) {
                         do {
                             let chunk = try JSONDecoder().decode(StreamChunk.self, from: chunkData)
-                            if let delta = chunk.choices.first?.delta.content, !delta.isEmpty {
-                                fullContent.append(delta)
-                                print("ChatService: Stream chunk received: \(delta)")
+                            if let delta = chunk.choices.first?.delta.content {
+                                if !delta.isEmpty {
+                                    fullContent.append(delta)
+                                    print("ChatService: ✅ Chunk: '\(delta)'")
+                                } else {
+                                    print("ChatService: ⏭️ Empty content chunk (role: \(chunk.choices.first?.delta.role ?? "none"))")
+                                }
+                            } else {
+                                print("ChatService: ⚠️ Chunk has no content field")
+                                print("ChatService: Chunk data: \(dataContent.prefix(200))")
                             }
                         } catch {
-                            print("ChatService: Failed to decode chunk: \(error.localizedDescription)")
-                            print("ChatService: Raw chunk data: \(dataContent)")
+                            print("ChatService: ❌ Decode error: \(error)")
+                            print("ChatService: Raw data: \(dataContent.prefix(300))")
                         }
                     }
                 }
