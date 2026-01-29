@@ -372,9 +372,8 @@ final class JSONParser {
     static func extractGoalBlueprintWithResult(from text: String) -> JSONParseResult {
         // Try to extract JSON from markdown code blocks
         guard let jsonString = extractJSONString(from: text) else {
-            let errorMsg = "未找到JSON数据块"
-            print("JSONParser: ❌ \(errorMsg)")
-            return .failure(errorMsg)
+            // No JSON found - this is expected for regular conversation
+            return .failure("未找到JSON数据块")
         }
 
         // Clean the JSON string
@@ -527,8 +526,6 @@ final class JSONParser {
 
     /// Extract JSON string from markdown code blocks
     private static func extractJSONString(from text: String) -> String? {
-        print("JSONParser: Searching for JSON in text (length: \(text.count))")
-
         // Pattern 1: ```json ... ``` (case insensitive, flexible whitespace)
         // Handles variations: ```json, ```JSON, ``` json, etc.
         if let jsonString = extractCodeBlock(from: text, language: "json") {
@@ -565,7 +562,7 @@ final class JSONParser {
             return jsonString
         }
 
-        print("JSONParser: ❌ No JSON found in text")
+        // No JSON found - this is normal for regular conversation
         return nil
     }
 
