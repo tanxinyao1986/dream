@@ -348,34 +348,37 @@ final class ChatService {
             )
         }
 
-        // Process SSE stream
+        // Process SSE stream with proper UTF-8 handling
         var fullContent = ""
-        var buffer = ""
+        var lineBuffer = Data()
 
         for try await byte in bytes {
-            guard let char = String(data: Data([byte]), encoding: .utf8) else {
-                continue
-            }
+            lineBuffer.append(byte)
 
-            buffer.append(char)
+            // Check for newline (0x0A)
+            if byte == 0x0A {
+                // Decode the complete line from UTF-8 bytes
+                guard let line = String(data: lineBuffer, encoding: .utf8) else {
+                    print("ChatService: ⚠️ Failed to decode line as UTF-8")
+                    lineBuffer.removeAll()
+                    continue
+                }
 
-            // Process complete lines
-            if char == "\n" {
-                let line = buffer.trimmingCharacters(in: .whitespaces)
-                buffer = ""
+                lineBuffer.removeAll()
+                let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
 
                 // Skip empty lines and comments
-                if line.isEmpty || line.hasPrefix(":") {
+                if trimmedLine.isEmpty || trimmedLine.hasPrefix(":") {
                     continue
                 }
 
                 // Parse SSE data line
-                if line.hasPrefix("data: ") {
-                    let dataContent = String(line.dropFirst(6))
+                if trimmedLine.hasPrefix("data: ") {
+                    let dataContent = String(trimmedLine.dropFirst(6))
 
                     // Check for stream end
                     if dataContent == "[DONE]" {
-                        print("ChatService: Stream completed with [DONE]")
+                        print("ChatService: ✅ Stream completed with [DONE]")
                         break
                     }
 
@@ -387,16 +390,11 @@ final class ChatService {
                                 if !delta.isEmpty {
                                     fullContent.append(delta)
                                     print("ChatService: ✅ Chunk: '\(delta)'")
-                                } else {
-                                    print("ChatService: ⏭️ Empty content chunk (role: \(chunk.choices.first?.delta.role ?? "none"))")
                                 }
-                            } else {
-                                print("ChatService: ⚠️ Chunk has no content field")
-                                print("ChatService: Chunk data: \(dataContent.prefix(200))")
                             }
                         } catch {
                             print("ChatService: ❌ Decode error: \(error)")
-                            print("ChatService: Raw data: \(dataContent.prefix(300))")
+                            print("ChatService: Raw data: \(dataContent.prefix(200))")
                         }
                     }
                 }
