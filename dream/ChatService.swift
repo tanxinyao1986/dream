@@ -1,5 +1,7 @@
 import Foundation
 import SwiftData
+import Supabase
+import Auth
 
 // MARK: - Chat Response Models
 
@@ -119,6 +121,43 @@ final class ChatService {
     /// Maximum number of messages to fetch for history context
     private let maxHistoryCount = 10
 
+    // MARK: - Local Encouragement Pool (Change 1)
+
+    /// Pre-defined encouragement messages to avoid API calls for common silent events
+    private static let encouragementPool: [String: [String]] = [
+        "completed": [
+            "微光虽小，但你把它点亮了。",
+            "又一束光，被你收入囊中。",
+            "今天的你，闪闪发光。",
+            "每一步微光，都在凝聚力量。",
+            "光球已亮，你真的做到了。",
+            "坚持本身，就是最美的光。",
+            "你的努力，微光都看见了。",
+            "一点一滴，终将汇成星河。"
+        ],
+        "delay": [
+            "允许暂停，也是一种前进。",
+            "休息不是放弃，是为了走更远。",
+            "没关系，明天的光还在等你。",
+            "暂时停下也好，月亮也有阴晴。",
+            "偶尔休息，让微光陪你。",
+            "给自己一点温柔的时间。",
+            "放慢脚步，也是一种勇气。",
+            "别急，光会等你准备好。"
+        ]
+    ]
+
+    /// Track last used index per trigger to avoid consecutive repeats
+    private var lastEncouragementIndex: [String: Int] = [:]
+
+    // MARK: - Silent Event Cache (Change 3)
+
+    /// Cache for API-fetched silent event responses
+    private var silentEventCache: [String: (text: String, timestamp: Date)] = [:]
+
+    /// Cache duration: 4 hours
+    private let silentCacheDuration: TimeInterval = 4 * 3600
+
     // MARK: - Supabase Configuration
 
     /// Supabase project URL
@@ -225,7 +264,26 @@ final class ChatService {
         streakDays: Int = 0,
         context: String = ""
     ) async throws -> String {
-        // Get silent event prompt with dynamic context
+        // Change 1: Try local encouragement pool first
+        if let pool = Self.encouragementPool[trigger], !pool.isEmpty {
+            let lastIndex = lastEncouragementIndex[trigger] ?? -1
+            var newIndex: Int
+            repeat {
+                newIndex = Int.random(in: 0..<pool.count)
+            } while newIndex == lastIndex && pool.count > 1
+            lastEncouragementIndex[trigger] = newIndex
+            print("ChatService: 🎯 Local encouragement for '\(trigger)' (no API call)")
+            return pool[newIndex]
+        }
+
+        // Change 3: Check cache for non-pooled triggers
+        if let cached = silentEventCache[trigger],
+           Date().timeIntervalSince(cached.timestamp) < silentCacheDuration {
+            print("ChatService: 📦 Cached encouragement for '\(trigger)'")
+            return cached.text
+        }
+
+        // Fallback: API call for triggers not in local pool
         let systemPrompt = promptManager.getSilentEventPrompt(
             trigger: trigger,
             goalName: goalName,
@@ -234,18 +292,20 @@ final class ChatService {
             context: context
         )
 
-        // Build messages (no history for silent events)
         let messages: [[String: String]] = [
             ["role": "system", "content": systemPrompt],
             ["role": "user", "content": "请根据事件生成一条简短的鼓励语。"]
         ]
 
-        // Make API request
         let responseText = try await makeAPIRequest(messages: messages)
 
-        // Return clean text (remove any quotes or extra whitespace)
-        return responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanText = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\"", with: "")
+
+        // Cache the API response
+        silentEventCache[trigger] = (text: cleanText, timestamp: Date())
+
+        return cleanText
     }
 
     /// Clear conversation history from SwiftData
@@ -276,14 +336,43 @@ final class ChatService {
             return []
         }
 
-        // Convert to API format and reverse to chronological order
-        return messages.reversed().map { $0.apiFormat }
+        // Convert to API format, strip JSON from assistant messages, reverse to chronological order
+        return messages.reversed().map { msg in
+            var formatted = msg.apiFormat
+            if formatted["role"] == "assistant", let content = formatted["content"] {
+                formatted["content"] = JSONParser.stripJSON(from: content)
+            }
+            return formatted
+        }
     }
 
     // MARK: - Private Methods
 
-    /// Make the actual API request with streaming support
+    /// Make the actual API request with streaming support, falling back to direct DashScope if Edge Function fails
     private func makeAPIRequest(messages: [[String: String]]) async throws -> String {
+        do {
+            return try await makeEdgeFunctionRequest(messages: messages)
+        } catch let error as ChatServiceError {
+            switch error {
+            case .networkError:
+                print("ChatService: ⚠️ Edge Function network error, falling back to direct DashScope API")
+                return try await makeDirectAPIRequest(messages: messages)
+            default:
+                throw error
+            }
+        } catch {
+            // URLSession can throw URLError directly (not wrapped in ChatServiceError)
+            let nsError = error as NSError
+            if nsError.domain == NSURLErrorDomain {
+                print("ChatService: ⚠️ URLSession error (\(nsError.code)), falling back to direct DashScope API")
+                return try await makeDirectAPIRequest(messages: messages)
+            }
+            throw ChatServiceError.networkError(error)
+        }
+    }
+
+    /// Make request via Supabase Edge Function
+    private func makeEdgeFunctionRequest(messages: [[String: String]]) async throws -> String {
         guard let url = URL(string: edgeFunctionURL) else {
             throw ChatServiceError.invalidURL
         }
@@ -305,7 +394,15 @@ final class ChatService {
         request.httpBody = jsonData
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(supabaseAnonKey)", forHTTPHeaderField: "Authorization")
+
+        // Use user's auth token if available, otherwise fall back to anon key
+        let bearerToken: String
+        if let session = try? await SupabaseManager.shared.client.auth.session {
+            bearerToken = session.accessToken
+        } else {
+            bearerToken = supabaseAnonKey
+        }
+        request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 60
 
         print("ChatService: 📤 Sending request to Edge Function")
@@ -348,7 +445,78 @@ final class ChatService {
             )
         }
 
-        // Process SSE stream with proper UTF-8 handling
+        return try await parseSSEStream(bytes: bytes)
+    }
+
+    /// Make request directly to DashScope API (fallback when Edge Function is unavailable)
+    private func makeDirectAPIRequest(messages: [[String: String]]) async throws -> String {
+        guard let url = URL(string: Secrets.chatCompletionsURL) else {
+            throw ChatServiceError.invalidURL
+        }
+
+        // Build request body
+        let requestBody: [String: Any] = [
+            "model": Secrets.modelName,
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 1024,
+            "stream": true
+        ]
+
+        let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
+
+        // Create request with DashScope Bearer token
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = jsonData
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(Secrets.aliyunAPIKey)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 60
+
+        print("ChatService: 📤 Sending request to DashScope directly")
+        print("ChatService: URL: \(Secrets.chatCompletionsURL)")
+        print("ChatService: Messages count: \(messages.count)")
+
+        // Make streaming request
+        let (bytes, response) = try await session.bytes(for: request)
+
+        print("ChatService: ✅ Direct connection established, receiving stream...")
+
+        // Check HTTP response
+        guard let httpResponse = response as? HTTPURLResponse else {
+            print("ChatService: ❌ Invalid HTTP response")
+            throw ChatServiceError.invalidResponse
+        }
+
+        print("ChatService: HTTP Status: \(httpResponse.statusCode)")
+
+        // Handle errors
+        if httpResponse.statusCode != 200 {
+            print("ChatService: ❌ HTTP Error \(httpResponse.statusCode)")
+            var errorData = Data()
+            for try await byte in bytes {
+                errorData.append(byte)
+            }
+
+            if let errorResponse = try? JSONDecoder().decode(APIErrorResponse.self, from: errorData) {
+                throw ChatServiceError.httpError(
+                    statusCode: httpResponse.statusCode,
+                    message: errorResponse.error.message
+                )
+            }
+
+            let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+            throw ChatServiceError.httpError(
+                statusCode: httpResponse.statusCode,
+                message: errorMessage
+            )
+        }
+
+        return try await parseSSEStream(bytes: bytes)
+    }
+
+    /// Parse SSE stream and extract content from chunks
+    private func parseSSEStream(bytes: URLSession.AsyncBytes) async throws -> String {
         var fullContent = ""
         var lineBuffer = Data()
 

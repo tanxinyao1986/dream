@@ -32,6 +32,7 @@ extension Notification.Name {
 @main
 struct dreamApp: App {
     @StateObject private var appState = AppState()
+    @StateObject private var supabaseManager = SupabaseManager.shared
 
     // Configure SwiftData ModelContainer
     let modelContainer: ModelContainer = {
@@ -53,10 +54,24 @@ struct dreamApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environmentObject(appState)
-                .preferredColorScheme(.light)
-                .modelContainer(modelContainer)
+            Group {
+                if supabaseManager.isLoading {
+                    // Show nothing or a brief loading state while restoring session
+                    Color.clear
+                } else if supabaseManager.isAuthenticated {
+                    RootView()
+                        .environmentObject(appState)
+                        .preferredColorScheme(.light)
+                        .modelContainer(modelContainer)
+                } else {
+                    LoginView()
+                        .preferredColorScheme(.light)
+                }
+            }
+            .environmentObject(supabaseManager)
+            .task {
+                await supabaseManager.restoreSession()
+            }
         }
     }
 }
@@ -131,11 +146,49 @@ struct RootView: View {
                     .zIndex(300)
                     .allowsHitTesting(false)
             }
+
+            // Mood Picker Overlay
+            if appState.showMoodPicker {
+                MoodPickerView { mood in
+                    withAnimation {
+                        appState.showMoodPicker = false
+                        appState.todayMoodRecorded = true
+                    }
+                    // Count tasks from the active goal's today data
+                    let (total, completed) = countTodayTasks()
+                    SupabaseManager.shared.reportDailyReflection(
+                        totalTasks: total,
+                        completedTasks: completed,
+                        mood: mood
+                    )
+                }
+                .zIndex(250)
+            }
         }
         .animation(.spring(response: 0.5, dampingFraction: 0.8), value: appState.showCalendar)
         .animation(.spring(response: 0.5, dampingFraction: 0.8), value: appState.showArchive)
         .animation(.easeInOut(duration: 0.8), value: appState.showSplash)
         .animation(.easeInOut(duration: 0.3), value: appState.showConfetti)
+        .animation(.easeInOut(duration: 0.3), value: appState.showMoodPicker)
+    }
+
+    /// Count today's total and completed tasks from the active goal
+    private func countTodayTasks() -> (total: Int, completed: Int) {
+        var descriptor = FetchDescriptor<Goal>(
+            predicate: #Predicate { !$0.isArchived && !$0.isCompleted },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+
+        guard let activeGoal = try? modelContext.fetch(descriptor).first else {
+            return (1, 1)
+        }
+
+        let calendar = Calendar.current
+        let todayTasks = activeGoal.dailyTasks.filter { calendar.isDateInToday($0.date) }
+        let total = max(todayTasks.count, 1)
+        let completed = todayTasks.filter { $0.isCompleted }.count
+        return (total, completed)
     }
 }
 
@@ -211,6 +264,10 @@ class AppState: ObservableObject {
 
     /// Celebration animation state (confetti/sparkles)
     @Published var showConfetti: Bool = false
+
+    /// Mood picker state
+    @Published var showMoodPicker: Bool = false
+    @Published var todayMoodRecorded: Bool = false
 
     private let calendar = Calendar.current
     private let dateFormatter: DateFormatter = {
@@ -705,6 +762,53 @@ class AppState: ObservableObject {
         initializeWelcomeMessageIfNeeded(modelContext: modelContext)
 
         print("AppState: ✅ Reset complete - ready for new journey (restart flag set)")
+    }
+
+    /// Completely reset all data and return to initial state (new user experience)
+    func resetAllData(modelContext: ModelContext) {
+        print("AppState: 🗑️ Resetting ALL data to initial state")
+
+        // Delete all Goal records (cascade deletes Phase + DailyTask)
+        let goalDescriptor = FetchDescriptor<Goal>()
+        if let goals = try? modelContext.fetch(goalDescriptor) {
+            for goal in goals {
+                modelContext.delete(goal)
+            }
+        }
+
+        // Delete all ArchivedGoal records
+        let archivedDescriptor = FetchDescriptor<ArchivedGoal>()
+        if let archived = try? modelContext.fetch(archivedDescriptor) {
+            for item in archived {
+                modelContext.delete(item)
+            }
+        }
+
+        // Delete all ChatMessage records
+        ChatService.shared.clearHistory(modelContext: modelContext)
+
+        // Clear in-memory state
+        bubbles.removeAll()
+        dayCompletions.removeAll()
+        currentGoalName = nil
+        currentPhase = .onboarding
+        isRestartingAfterCompletion = false
+
+        // Clear graduation letter state
+        graduationLetterContent = ""
+        graduationLetterTitle = ""
+
+        // Save deletions
+        try? modelContext.save()
+
+        // Reload and initialize welcome message
+        reloadChatMessages(from: modelContext)
+        initializeWelcomeMessageIfNeeded(modelContext: modelContext)
+
+        // Notify UI
+        NotificationCenter.default.post(name: .goalDataDidChange, object: nil)
+
+        print("AppState: ✅ All data reset complete - back to initial state")
     }
 
     /// Check if completing this bubble completes the goal
@@ -1269,6 +1373,7 @@ struct HomeView: View {
     @State private var showSnoozeHint = false
     @State private var snoozeHintText = ""
     @State private var isDraggingBubble = false  // Track when user is dragging a bubble
+    @State private var showResetConfirmation = false
 
     // Task input state
     @State private var showTaskInput = false
@@ -1492,6 +1597,21 @@ struct HomeView: View {
                                 .background(Circle().fill(.ultraThinMaterial))
                                 .animation(.easeInOut(duration: 0.3), value: isDraggingBubble)
                         }
+                    }
+                    .onLongPressGesture(minimumDuration: 2) {
+                        showResetConfirmation = true
+                    }
+                    .confirmationDialog(
+                        "重置所有数据",
+                        isPresented: $showResetConfirmation,
+                        titleVisibility: .visible
+                    ) {
+                        Button("确定重置", role: .destructive) {
+                            appState.resetAllData(modelContext: modelContext)
+                        }
+                        Button("取消", role: .cancel) {}
+                    } message: {
+                        Text("确定要重置所有数据吗？这将清除所有对话、目标和光球记录，回到初始状态。此操作不可撤销。")
                     }
 
                     // Hint text for drag-to-tomorrow feature - only visible when dragging
@@ -1922,6 +2042,12 @@ struct HomeView: View {
             todayTask.isCompleted = true
             try? modelContext.save()
 
+            // Report task completion to Supabase
+            SupabaseManager.shared.reportTaskCompletion(
+                title: todayTask.label,
+                scheduledDate: todayTask.date
+            )
+
             print("HomeView: ✅ Marked DailyTask '\(todayTask.label)' as completed")
 
             // Check if this was the last task (Trigger 2: Physical - Popping Last Bubble)
@@ -1950,6 +2076,16 @@ struct HomeView: View {
 
         // Also check for natural goal completion (all tasks done on schedule)
         appState.checkGoalCompletion(modelContext: modelContext)
+
+        // Trigger mood picker if all today's core bubbles have been popped (removed)
+        if !appState.todayMoodRecorded {
+            let remainingCoreBubbles = appState.bubbles.filter { $0.type == .core }
+            if remainingCoreBubbles.isEmpty {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    self.appState.showMoodPicker = true
+                }
+            }
+        }
 
         // Silent Narrator: Get encouragement from AI (with guaranteed fallback)
         let fallbackMessages = [
@@ -2100,6 +2236,9 @@ class BubbleNode: SKNode {
 
     // Visual layers
     private var bubbleSprite: SKSpriteNode!
+    private var glowSprite: SKSpriteNode?
+    private var colorWheelSprite: SKSpriteNode?
+    private var highlightSprite: SKSpriteNode?
     private var textLabel: SKLabelNode!
 
     init(bubble: Bubble, radius: CGFloat, isStatic: Bool = false) {
@@ -2118,9 +2257,51 @@ class BubbleNode: SKNode {
                 let bubbleTexture = renderFrozenCoreBubbleTexture(size: diameter)
                 createBubbleSprite(texture: bubbleTexture, size: diameter)
             } else {
-                // ALIVE CORE: Airy soap bubble
-                let bubbleTexture = renderCoreBubbleTexture(size: diameter)
-                createBubbleSprite(texture: bubbleTexture, size: diameter)
+                // ALIVE CORE: Multi-layer orb matching onboarding SoapBubbleView.splash
+                // We decompose the SwiftUI SoapBubbleView into separate SpriteKit layers
+                // so we can animate rotation/pulse independently (SwiftUI animations are lost in texture snapshots)
+
+                // Layer 0: Outer glow halo (blurred, behind everything)
+                let glowFrameSize = diameter * 2.2
+                if let glowTex = renderGlowTexture(bubbleDiameter: diameter, frameSize: glowFrameSize) {
+                    let glow = SKSpriteNode(texture: glowTex)
+                    glow.size = CGSize(width: glowFrameSize, height: glowFrameSize)
+                    glow.zPosition = -2
+                    addChild(glow)
+                    self.glowSprite = glow
+                    addGlowAnimations(to: glow)
+                }
+
+                // Layer 1: Color wheel (AngularGradient) — this layer ROTATES
+                if let wheelTex = renderColorWheelTexture(size: diameter) {
+                    let wheel = SKSpriteNode(texture: wheelTex)
+                    wheel.size = CGSize(width: diameter, height: diameter)
+                    wheel.blendMode = .add  // Matches SwiftUI .colorDodge
+                    wheel.zPosition = -1
+                    addChild(wheel)
+                    self.colorWheelSprite = wheel
+                    addRotationAnimation(to: wheel)
+                }
+
+                // Layer 2: Static bubble shell (edge glow, radial gradient, shadow — NO AngularGradient)
+                if let shellTex = renderBubbleShellTexture(size: diameter) {
+                    let shell = SKSpriteNode(texture: shellTex)
+                    shell.size = CGSize(width: diameter, height: diameter)
+                    shell.zPosition = 0
+                    addChild(shell)
+                    self.bubbleSprite = shell
+                    addBubblePulseAnimation(to: shell)
+                }
+
+                // Layer 3: Highlight (pulsing opacity like onboarding's highlightPhase)
+                if let hlTex = renderHighlightTexture(size: diameter) {
+                    let hl = SKSpriteNode(texture: hlTex)
+                    hl.size = CGSize(width: diameter, height: diameter)
+                    hl.zPosition = 1
+                    addChild(hl)
+                    self.highlightSprite = hl
+                    addHighlightPulseAnimation(to: hl)
+                }
             }
         } else {
             let hazyPalettes = [
@@ -2164,6 +2345,229 @@ class BubbleNode: SKNode {
         } else {
             return renderCoreBubbleFallback(size: size)
         }
+    }
+
+    // MARK: - Multi-layer Core Orb Rendering (matches onboarding SoapBubbleView.splash)
+
+    /// Outer glow halo with blur baked into the texture (matches SplashView's blurred RadialGradient)
+    private func renderGlowTexture(bubbleDiameter: CGFloat, frameSize: CGFloat) -> SKTexture? {
+        if #available(iOS 16.0, *) {
+            let glowView = Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color(hex: "FFD700").opacity(0.45),
+                            Color(hex: "FFB6C1").opacity(0.35),
+                            Color(hex: "FFB6C1").opacity(0.15),
+                            Color.clear
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: bubbleDiameter * 0.5
+                    )
+                )
+                .frame(width: bubbleDiameter, height: bubbleDiameter)
+                .blur(radius: bubbleDiameter * 0.18)  // Matches onboarding's blur(30) scaled down
+                .frame(width: frameSize, height: frameSize)
+            return glowView.renderToSKTexture(size: CGSize(width: frameSize, height: frameSize))
+        } else {
+            let image = UIGraphicsImageRenderer(size: CGSize(width: frameSize, height: frameSize)).image { ctx in
+                let colors: [CGColor] = [
+                    UIColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 0.45).cgColor,
+                    UIColor(red: 1.0, green: 0.71, blue: 0.76, alpha: 0.35).cgColor,
+                    UIColor.clear.cgColor
+                ]
+                let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                         colors: colors as CFArray,
+                                         locations: [0.0, 0.5, 1.0])!
+                ctx.cgContext.drawRadialGradient(gradient,
+                                                startCenter: CGPoint(x: frameSize/2, y: frameSize/2),
+                                                startRadius: 0,
+                                                endCenter: CGPoint(x: frameSize/2, y: frameSize/2),
+                                                endRadius: frameSize/2,
+                                                options: [])
+            }
+            return SKTexture(image: image)
+        }
+    }
+
+    /// AngularGradient color wheel — Layer 3 from SoapBubbleView, rendered alone so it can rotate in SpriteKit
+    private func renderColorWheelTexture(size: CGFloat) -> SKTexture? {
+        let splashColors: [Color] = [
+            Color(hex: "FFD700"),
+            Color(hex: "FF6B9D"),
+            Color(hex: "C77DFF"),
+            Color(hex: "4CC9F0"),
+            Color(hex: "7FE3A0"),
+            Color(hex: "FF9770"),
+            Color(hex: "FFE66D"),
+            Color(hex: "FFD700")  // close the loop
+        ]
+
+        if #available(iOS 16.0, *) {
+            // Render at moderate opacity; .add blend mode in SpriteKit will brighten it
+            let wheelView = Circle()
+                .fill(
+                    AngularGradient(
+                        gradient: Gradient(colors: splashColors),
+                        center: .center,
+                        angle: .degrees(0)
+                    )
+                )
+                .opacity(0.7)
+                .blur(radius: 1.0)
+                .frame(width: size, height: size)
+            return wheelView.renderToSKTexture(size: CGSize(width: size, height: size))
+        } else {
+            return nil
+        }
+    }
+
+    /// Static bubble shell — edge glow, radial gradient, bottom shadow (everything EXCEPT AngularGradient & highlight)
+    private func renderBubbleShellTexture(size: CGFloat) -> SKTexture? {
+        let splashColors: [Color] = [
+            Color(hex: "FFD700"),
+            Color(hex: "FF6B9D"),
+            Color(hex: "C77DFF"),
+            Color(hex: "4CC9F0"),
+            Color(hex: "7FE3A0"),
+            Color(hex: "FF9770"),
+            Color(hex: "FFE66D")
+        ]
+        let intensity: CGFloat = 3.2
+
+        if #available(iOS 16.0, *) {
+            let shellView = ZStack {
+                // Layer 1: Transparent base
+                Circle()
+                    .fill(splashColors.first!.opacity(0.02 * intensity))
+
+                // Layer 2: Edge glow
+                Circle()
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.5 * intensity),
+                                Color.white.opacity(0.15 * intensity)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ),
+                        lineWidth: 3
+                    )
+                    .blur(radius: 5)
+
+                // Layer 4: Multi-color radial gradient
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color.white.opacity(0.2),
+                                splashColors[0].opacity(0.3 * intensity),
+                                splashColors[1].opacity(0.25 * intensity),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: size * 0.5
+                        )
+                    )
+
+                // Layer 6: Secondary highlight
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color.white.opacity(0.4 * intensity),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: size * 0.15
+                        )
+                    )
+                    .frame(width: size * 0.3, height: size * 0.3)
+                    .offset(x: -size * 0.25, y: -size * 0.25)
+
+                // Layer 7: Bottom shadow
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color.black.opacity(0.1 * intensity),
+                                Color.clear
+                            ],
+                            center: UnitPoint(x: 0.5, y: 0.85),
+                            startRadius: 0,
+                            endRadius: size * 0.3
+                        )
+                    )
+            }
+            .frame(width: size, height: size)
+            return shellView.renderToSKTexture(size: CGSize(width: size, height: size))
+        } else {
+            return renderCoreBubbleFallback(size: size)
+        }
+    }
+
+    /// Main highlight reflection — Layer 5 from SoapBubbleView, rendered alone so we can pulse its opacity
+    private func renderHighlightTexture(size: CGFloat) -> SKTexture? {
+        let intensity: CGFloat = 3.2
+
+        if #available(iOS 16.0, *) {
+            let hlView = Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.white.opacity(0.9 * intensity),
+                            Color.white.opacity(0.4 * intensity),
+                            Color.clear
+                        ],
+                        center: UnitPoint(x: 0.3, y: 0.25),
+                        startRadius: 0,
+                        endRadius: size * 0.35
+                    )
+                )
+                .frame(width: size * 0.6, height: size * 0.6)
+                .offset(x: -size * 0.15, y: -size * 0.2)
+                .frame(width: size, height: size)
+            return hlView.renderToSKTexture(size: CGSize(width: size, height: size))
+        } else {
+            return nil
+        }
+    }
+
+    // MARK: - Core Orb Animations
+
+    private func addGlowAnimations(to sprite: SKSpriteNode) {
+        // Opacity pulse: 0.5 ↔ 0.85, ~3.5s (matches onboarding background pulse)
+        let fadeUp = SKAction.fadeAlpha(to: 0.85, duration: 3.5)
+        let fadeDown = SKAction.fadeAlpha(to: 0.5, duration: 3.5)
+        fadeUp.timingMode = .easeInEaseOut
+        fadeDown.timingMode = .easeInEaseOut
+        let opacityPulse = SKAction.sequence([fadeUp, fadeDown])
+        sprite.run(SKAction.repeatForever(opacityPulse), withKey: "glowOpacity")
+
+        // Scale pulse: 1.0 ↔ 1.06, ~4s
+        let scaleUp = SKAction.scale(to: 1.06, duration: 4.0)
+        let scaleDown = SKAction.scale(to: 1.0, duration: 4.0)
+        scaleUp.timingMode = .easeInEaseOut
+        scaleDown.timingMode = .easeInEaseOut
+        let scalePulse = SKAction.sequence([scaleUp, scaleDown])
+        sprite.run(SKAction.repeatForever(scalePulse), withKey: "glowScale")
+
+        sprite.alpha = 0.7
+    }
+
+    /// Highlight opacity pulse: matches SoapBubbleView's `0.7 + 0.3 * sin(highlightPhase)` animation
+    private func addHighlightPulseAnimation(to sprite: SKSpriteNode) {
+        let fadeUp = SKAction.fadeAlpha(to: 1.0, duration: 1.5)
+        let fadeDown = SKAction.fadeAlpha(to: 0.7, duration: 1.5)
+        fadeUp.timingMode = .easeInEaseOut
+        fadeDown.timingMode = .easeInEaseOut
+        let pulse = SKAction.sequence([fadeUp, fadeDown])
+        sprite.run(SKAction.repeatForever(pulse), withKey: "highlightPulse")
+        sprite.alpha = 0.85
     }
 
     private func renderChoreBubbleTexture(size: CGFloat, colors: [String]) -> SKTexture? {
@@ -2438,6 +2842,9 @@ class BubbleNode: SKNode {
         self.removeAction(forKey: "nodeBreathing")
         bubbleSprite?.removeAction(forKey: "breathe")
         bubbleSprite?.removeAction(forKey: "rotate")
+        colorWheelSprite?.removeAllActions()
+        glowSprite?.removeAllActions()
+        highlightSprite?.removeAllActions()
 
         let scale = SKAction.scale(to: 1.3, duration: 0.2)
         let fade = SKAction.fadeOut(withDuration: 0.2)
