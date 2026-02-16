@@ -5404,27 +5404,22 @@ struct SettingsView: View {
     @State private var showDeleteConfirmation = false
     @State private var isDeleting = false
     @State private var showDeleteSuccess = false
+    @State private var activeLegalPage: LegalPage?
 
     var body: some View {
         NavigationStack {
             List {
                 Section(header: Text(L("信息与支持"))) {
-                    if let url = AppLinks.privacyPolicyURL {
-                        Link(destination: url) {
-                            Label(L("隐私政策"), systemImage: "hand.raised")
-                        }
-                    } else {
+                    Button {
+                        activeLegalPage = .privacy
+                    } label: {
                         Label(L("隐私政策"), systemImage: "hand.raised")
-                            .foregroundColor(.secondary)
                     }
 
-                    if let url = AppLinks.technicalSupportURL {
-                        Link(destination: url) {
-                            Label(L("技术支持"), systemImage: "questionmark.circle")
-                        }
-                    } else {
+                    Button {
+                        activeLegalPage = .support
+                    } label: {
                         Label(L("技术支持"), systemImage: "questionmark.circle")
-                            .foregroundColor(.secondary)
                     }
                 }
 
@@ -5461,6 +5456,9 @@ struct SettingsView: View {
                 Button(L("完成")) { dismiss() }
             } message: {
                 Text(L("你的账号与数据已删除。"))
+            }
+            .sheet(item: $activeLegalPage) { page in
+                LegalPageContainer(page: page)
             }
             .overlay {
                 if isDeleting {

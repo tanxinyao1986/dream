@@ -1,15 +1,21 @@
 import Foundation
 
 struct AppLinks {
-    // TODO: Replace with Supabase Pages URLs after deployment.
-    static let privacyPolicyURLString: String = "https://tanxinyao1986.github.io/lumi/privacy.html"
-    static let technicalSupportURLString: String = "https://tanxinyao1986.github.io/lumi/support.html"
+    private static let privacyPolicyURLZh: String = "https://tanxinyao1986.github.io/lumi/privacy.html"
+    private static let technicalSupportURLZh: String = "https://tanxinyao1986.github.io/lumi/support.html"
+
+    private static let privacyPolicyURLEn: String = "https://tanxinyao1986.github.io/lumi/privacy-en.html"
+    private static let technicalSupportURLEn: String = "https://tanxinyao1986.github.io/lumi/support-en.html"
+
+    private static var isChineseLocale: Bool {
+        Locale.current.language.languageCode?.identifier.hasPrefix("zh") ?? false
+    }
 
     static var privacyPolicyURL: URL? {
-        URL(string: privacyPolicyURLString)
+        URL(string: isChineseLocale ? privacyPolicyURLZh : privacyPolicyURLEn)
     }
 
     static var technicalSupportURL: URL? {
-        URL(string: technicalSupportURLString)
+        URL(string: isChineseLocale ? technicalSupportURLZh : technicalSupportURLEn)
     }
 }

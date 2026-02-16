@@ -17,6 +17,7 @@ struct PaywallView: View {
     @State private var isPurchasing = false
     @State private var showError = false
     @State private var errorMessage = ""
+    @State private var activeLegalPage: LegalPage?
 
     // Context-dependent copy
     private var title: String {
@@ -55,8 +56,8 @@ struct PaywallView: View {
             )
             .ignoresSafeArea()
 
-            // Close button
-            VStack {
+            VStack(spacing: 0) {
+                // Close button row
                 HStack {
                     Spacer()
                     Button(action: onDismiss) {
@@ -72,12 +73,10 @@ struct PaywallView: View {
                     .padding(.trailing, 20)
                     .padding(.top, 16)
                 }
-                Spacer()
-            }
 
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 28) {
-                    Spacer().frame(height: 60)
+                    Spacer().frame(height: 20)
 
                     // MARK: - Header
                     VStack(spacing: 10) {
@@ -99,11 +98,16 @@ struct PaywallView: View {
                     // MARK: - Benefits Comparison
                     benefitsTable
 
-                    // MARK: - Product Cards
-                    productCards
+                    if subscriptionManager.products.isEmpty {
+                        // Products not yet loaded
+                        productsLoadingView
+                    } else {
+                        // MARK: - Product Cards
+                        productCards
 
-                    // MARK: - Purchase Button
-                    purchaseButton
+                        // MARK: - Purchase Button
+                        purchaseButton
+                    }
 
                     // MARK: - Restore
                     Button(action: {
@@ -126,18 +130,11 @@ struct PaywallView: View {
                             .foregroundColor(Color(hex: "8B7355").opacity(0.7))
 
                         HStack(spacing: 16) {
-                            if let url = AppLinks.privacyPolicyURL {
-                                Link(L("隐私政策"), destination: url)
-                            } else {
-                                Text(L("隐私政策"))
-                                    .foregroundColor(.secondary)
+                            Button(L("隐私政策")) {
+                                activeLegalPage = .privacy
                             }
-
-                            if let url = AppLinks.technicalSupportURL {
-                                Link(L("技术支持"), destination: url)
-                            } else {
-                                Text(L("技术支持"))
-                                    .foregroundColor(.secondary)
+                            Button(L("技术支持")) {
+                                activeLegalPage = .support
                             }
                         }
                         .font(.system(size: 12, weight: .medium))
@@ -148,15 +145,26 @@ struct PaywallView: View {
                 }
                 .padding(.horizontal, 24)
             }
+            } // end VStack
         }
         .alert(L("购买失败"), isPresented: $showError) {
             Button(L("好的"), role: .cancel) {}
         } message: {
             Text(errorMessage)
         }
+        .sheet(item: $activeLegalPage) { page in
+            LegalPageContainer(page: page)
+        }
         .onAppear {
             // Default select yearly
             selectedProduct = subscriptionManager.products.last
+        }
+        .task {
+            // Retry loading if products are empty
+            if subscriptionManager.products.isEmpty {
+                await subscriptionManager.loadProducts()
+                selectedProduct = subscriptionManager.products.last
+            }
         }
     }
 
@@ -356,5 +364,19 @@ struct PaywallView: View {
         }
         .disabled(selectedProduct == nil || isPurchasing)
         .opacity(selectedProduct == nil ? 0.5 : 1)
+    }
+
+    // MARK: - Product Loading State
+
+    /// Shown when products haven't loaded yet
+    private var productsLoadingView: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+                .tint(Color(hex: "CBA972"))
+            Text(L("正在加载商品信息..."))
+                .font(.system(size: 14))
+                .foregroundColor(Color(hex: "8B7355").opacity(0.6))
+        }
+        .frame(height: 100)
     }
 }
