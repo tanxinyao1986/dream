@@ -8,10 +8,14 @@
 
 /* Begin PBXBuildFile section */
 		321B73222F03D87D001BD8A0 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 321B73212F03D87D001BD8A0 /* Supabase */; };
+		32EEC2722F437F32003BE0E2 /* Products.storekit in Resources */ = {isa = PBXBuildFile; fileRef = 32EEC2712F437F32003BE0E2 /* Products.storekit */; };
+		32FDC0462F422616000F9B8F /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 32FDC0452F422616000F9B8F /* StoreKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		321B73122F02F9F1001BD8A0 /* dream.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = dream.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		32EEC2712F437F32003BE0E2 /* Products.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = Products.storekit; sourceTree = "<group>"; };
+		32FDC0452F422616000F9B8F /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -28,6 +32,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				321B73222F03D87D001BD8A0 /* Supabase in Frameworks */,
+				32FDC0462F422616000F9B8F /* StoreKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -37,7 +42,9 @@
 		321B73092F02F9F1001BD8A0 = {
 			isa = PBXGroup;
 			children = (
+				32EEC2712F437F32003BE0E2 /* Products.storekit */,
 				321B73142F02F9F1001BD8A0 /* dream */,
+				32FDC0442F422616000F9B8F /* Frameworks */,
 				321B73132F02F9F1001BD8A0 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -48,6 +55,14 @@
 				321B73122F02F9F1001BD8A0 /* dream.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		32FDC0442F422616000F9B8F /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				32FDC0452F422616000F9B8F /* StoreKit.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -119,6 +134,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				32EEC2722F437F32003BE0E2 /* Products.storekit in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

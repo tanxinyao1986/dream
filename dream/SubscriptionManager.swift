@@ -45,7 +45,12 @@ class SubscriptionManager: ObservableObject {
 
     func loadProducts() async {
         do {
+            print("SubscriptionManager: Loading products for IDs: \(productIDs)")
             let storeProducts = try await Product.products(for: productIDs)
+            print("SubscriptionManager: Loaded \(storeProducts.count) products")
+            for p in storeProducts {
+                print("  - \(p.id): \(p.displayName) \(p.displayPrice)")
+            }
             // Sort: monthly first, yearly second
             products = storeProducts.sorted { a, b in
                 (a.subscription?.subscriptionPeriod.unit == .month ? 0 : 1) <
@@ -84,7 +89,19 @@ class SubscriptionManager: ObservableObject {
     // MARK: - Restore
 
     func restorePurchases() async {
+        // Only use AppStore.sync() which triggers the Apple sign-in dialog
+        // when explicitly requested by the user via restore button
         try? await AppStore.sync()
+        await updateSubscriptionStatus()
+    }
+
+    /// Silently check entitlements without triggering Apple sign-in dialog
+    func silentRestore() async {
+        await updateSubscriptionStatus()
+    }
+
+    /// Called after SubscriptionStoreView completes a purchase
+    func updateAfterPurchase() async {
         await updateSubscriptionStatus()
     }
 

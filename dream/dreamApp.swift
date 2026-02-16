@@ -1239,6 +1239,11 @@ class SoundManager: ObservableObject {
         let generator = UIImpactFeedbackGenerator(style: .heavy)
         generator.impactOccurred()
     }
+
+    static func hapticSoft() {
+        let generator = UIImpactFeedbackGenerator(style: .soft)
+        generator.impactOccurred()
+    }
 }
 
 // MARK: - ========== 1. Splash 页面（升级版）==========
@@ -1282,8 +1287,11 @@ struct SplashView: View {
 
                 // App Name: 微光计划
                 Text("微光计划")
-                    .font(.system(size: 40, weight: .light))
-                    .foregroundColor(Color(hex: "CBA972"))
+                    .font(.system(size: 40, weight: .light, design: .rounded))
+                    .kerning(10)
+                    .foregroundColor(Color(hex: "4A4A4A"))
+                    .opacity(0.9)
+                    .shadow(color: Color.white.opacity(0.35), radius: 10)
                     .opacity(showQuote ? 1 : 0)
 
                 ZStack {
@@ -2167,6 +2175,7 @@ struct HomeView: View {
 
     private func popBubble(_ bubbleId: UUID) {
         guard let bubble = appState.bubbles.first(where: { $0.id == bubbleId }) else { return }
+        SoundManager.hapticSoft()
         bubbleScene.popBubble(id: bubbleId)
         appState.completeBubble(bubble)
 
@@ -5331,8 +5340,11 @@ struct ArchiveView: View {
                     Spacer()
 
                     Text("光尘")
-                        .font(.system(size: 22, weight: .semibold))
+                        .font(.custom("New York", size: 26))
+                        .kerning(2)
                         .foregroundColor(Color(hex: "CBA972"))
+                        .shadow(color: Color.white.opacity(0.35), radius: 10)
+                        .padding(.top, 6)
 
                     Spacer()
 

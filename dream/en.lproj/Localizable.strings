@@ -188,7 +188,7 @@
 "愿景数量" = "Vision count";
 "专注一个" = "Focus on one";
 "专注是一种力量" = "Focus is strength";
-"省17%" = "Save 17%";
+"省31%" = "Save 31%";
 "月度" = "Monthly";
 "年度" = "Yearly";
 "/月" = "/mo";
@@ -206,6 +206,8 @@
 "基础版" = "Basic plan";
 "升级" = "Upgrade";
 "无法连接商店，请稍后重试" = "Cannot connect to store. Please try later.";
+"选择你的追光计划" = "Choose your plan";
+"订阅将自动续期，可随时在系统设置中取消" = "Subscriptions auto-renew. Cancel anytime in Settings.";
 "设置" = "Settings";
 "隐私政策" = "Privacy Policy";
 "技术支持" = "Technical Support";

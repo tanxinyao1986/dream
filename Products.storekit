@@ -1,0 +1,123 @@
+{
+  "appPolicies" : {
+    "eula" : "",
+    "policies" : [
+      {
+        "locale" : "en_US",
+        "policyText" : "",
+        "policyURL" : ""
+      }
+    ]
+  },
+  "identifier" : "C31BB317",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+
+  ],
+  "settings" : {
+    "_askToBuyEnabled" : false,
+    "_billingGracePeriodEnabled" : false,
+    "_billingIssuesEnabled" : false,
+    "_disableDialogs" : false,
+    "_failTransactionsEnabled" : false,
+    "_locale" : "zh_CN",
+    "_renewalBillingIssuesEnabled" : false,
+    "_storefront" : "CHN",
+    "_storeKitErrors" : [
+
+    ],
+    "_timeRate" : 0
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "B2D8F1A3",
+      "localizations" : [
+        {
+          "description" : "解锁全部追光者权益",
+          "displayName" : "追光者",
+          "locale" : "zh_CN"
+        },
+        {
+          "description" : "Unlock all Pathfinder benefits",
+          "displayName" : "Pathfinder",
+          "locale" : "en_US"
+        }
+      ],
+      "name" : "Pathfinder Pro",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "7",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "E1A2B3C4",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "每月自动续订",
+              "displayName" : "追光者月度",
+              "locale" : "zh_CN"
+            },
+            {
+              "description" : "Auto-renews monthly",
+              "displayName" : "Pathfinder Monthly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.lumi.pro.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Pathfinder Monthly",
+          "subscriptionGroupID" : "B2D8F1A3",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "58",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "F5D6E7A8",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "每年自动续订，省31%",
+              "displayName" : "追光者年度",
+              "locale" : "zh_CN"
+            },
+            {
+              "description" : "Auto-renews yearly, save 31%",
+              "displayName" : "Pathfinder Yearly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.lumi.pro.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Pathfinder Yearly",
+          "subscriptionGroupID" : "B2D8F1A3",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}
