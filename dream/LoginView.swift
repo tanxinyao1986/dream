@@ -7,12 +7,6 @@ struct LoginView: View {
     @State private var currentNonce: String?
     @State private var errorMessage: String?
     @State private var pulseAnimation = false
-    @Environment(\.locale) private var locale
-
-    /// Whether the current locale is Chinese
-    private var isChinese: Bool {
-        locale.language.languageCode?.identifier.hasPrefix("zh") ?? false
-    }
 
     var body: some View {
         ZStack {
@@ -44,11 +38,11 @@ struct LoginView: View {
 
                 // App title — localized
                 VStack(spacing: 12) {
-                    Text(isChinese ? "微光计划" : "Lumi")
+                    Text("微光计划")
                         .font(.system(size: 40, weight: .light))
                         .foregroundColor(Color(hex: "CBA972"))
 
-                    Text(isChinese ? "每一步微光，都在凝聚力量" : "Every little glow builds your strength")
+                    Text("每一步微光，都在凝聚力量")
                         .font(.system(size: 16, weight: .medium, design: .rounded))
                         .foregroundColor(Color(hex: "CBA972").opacity(0.75))
                 }
@@ -88,11 +82,11 @@ struct LoginView: View {
     private func handleSignInResult(_ result: Result<ASAuthorization, Error>) {
         switch result {
         case .success(let authorization):
-            guard let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential,
-                  let identityTokenData = appleIDCredential.identityToken,
-                  let idToken = String(data: identityTokenData, encoding: .utf8),
-                  let nonce = currentNonce else {
-                errorMessage = "无法获取 Apple ID 凭证"
+                guard let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                      let identityTokenData = appleIDCredential.identityToken,
+                      let idToken = String(data: identityTokenData, encoding: .utf8),
+                      let nonce = currentNonce else {
+                errorMessage = L("无法获取 Apple ID 凭证")
                 return
             }
 
@@ -101,7 +95,7 @@ struct LoginView: View {
                     try await supabaseManager.signInWithApple(idToken: idToken, nonce: nonce)
                 } catch {
                     await MainActor.run {
-                        errorMessage = "登录失败: \(error.localizedDescription)"
+                        errorMessage = L("登录失败: %@", error.localizedDescription)
                     }
                 }
             }
@@ -109,7 +103,7 @@ struct LoginView: View {
         case .failure(let error):
             // User cancelled is not a real error
             if (error as NSError).code != ASAuthorizationError.canceled.rawValue {
-                errorMessage = "Apple 登录失败: \(error.localizedDescription)"
+                errorMessage = L("Apple 登录失败: %@", error.localizedDescription)
             }
         }
     }

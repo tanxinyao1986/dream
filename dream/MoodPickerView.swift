@@ -4,10 +4,10 @@ struct MoodPickerView: View {
     let onMoodSelected: (String) -> Void
 
     private let moods: [(emoji: String, label: String, value: String)] = [
-        ("🌟", "很好", "great"),
-        ("😊", "不错", "good"),
-        ("😐", "一般", "okay"),
-        ("😔", "低落", "bad")
+        ("🌟", L("很好"), "great"),
+        ("😊", L("不错"), "good"),
+        ("😐", L("一般"), "okay"),
+        ("😔", L("低落"), "bad")
     ]
 
     var body: some View {

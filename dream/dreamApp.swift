@@ -21,6 +21,7 @@ import Combine
 import SpriteKit
 import AVFoundation
 import SwiftData
+import StoreKit
 
 // MARK: - ========== Notification Names ==========
 extension Notification.Name {
@@ -33,6 +34,7 @@ extension Notification.Name {
 struct dreamApp: App {
     @StateObject private var appState = AppState()
     @StateObject private var supabaseManager = SupabaseManager.shared
+    @StateObject private var subscriptionManager = SubscriptionManager.shared
 
     // Configure SwiftData ModelContainer
     let modelContainer: ModelContainer = {
@@ -61,6 +63,7 @@ struct dreamApp: App {
                 } else if supabaseManager.isAuthenticated {
                     RootView()
                         .environmentObject(appState)
+                        .environmentObject(subscriptionManager)
                         .preferredColorScheme(.light)
                         .modelContainer(modelContainer)
                 } else {
@@ -71,6 +74,9 @@ struct dreamApp: App {
             .environmentObject(supabaseManager)
             .task {
                 await supabaseManager.restoreSession()
+            }
+            .task {
+                await subscriptionManager.loadProducts()
             }
         }
     }
@@ -147,6 +153,25 @@ struct RootView: View {
                     .allowsHitTesting(false)
             }
 
+            // Paywall Overlay
+            if appState.showPaywall {
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        appState.dismissPaywall()
+                    }
+                    .zIndex(259)
+
+                PaywallView(
+                    context: appState.paywallContext,
+                    onDismiss: {
+                        appState.dismissPaywall()
+                    }
+                )
+                .zIndex(260)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             // Mood Picker Overlay
             if appState.showMoodPicker {
                 MoodPickerView { mood in
@@ -170,6 +195,7 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.8), value: appState.showSplash)
         .animation(.easeInOut(duration: 0.3), value: appState.showConfetti)
         .animation(.easeInOut(duration: 0.3), value: appState.showMoodPicker)
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: appState.showPaywall)
     }
 
     /// Count today's total and completed tasks from the active goal
@@ -269,6 +295,19 @@ class AppState: ObservableObject {
     @Published var showMoodPicker: Bool = false
     @Published var todayMoodRecorded: Bool = false
 
+    // MARK: - Subscription & Paywall
+    @Published var showPaywall: Bool = false
+    @Published var paywallContext: PaywallContext = .aiMessageLimit
+    @Published private(set) var dailyMessageCount: Int = 0
+    @Published var isPro: Bool = false
+
+    /// Daily message limit for free users
+    private let freeMessageLimit = 8
+
+    /// UserDefaults keys for daily message tracking
+    private let messageCountKey = "dailyMessageCount"
+    private let messageCountDateKey = "dailyMessageCountDate"
+
     private let calendar = Calendar.current
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -278,15 +317,20 @@ class AppState: ObservableObject {
 
     init() {
         bubbles = [
-            Bubble(text: "每天写500字", type: .core, position: CGPoint(x: 0.5, y: 0.3)),
-            Bubble(text: "回复邮件", type: .small, position: CGPoint(x: 0.25, y: 0.45)),
-            Bubble(text: "买菜", type: .small, position: CGPoint(x: 0.7, y: 0.4)),
-            Bubble(text: "打电话给妈妈", type: .small, position: CGPoint(x: 0.35, y: 0.65)),
-            Bubble(text: "整理房间", type: .small, position: CGPoint(x: 0.65, y: 0.7))
+            Bubble(text: L("每天写500字"), type: .core, position: CGPoint(x: 0.5, y: 0.3)),
+            Bubble(text: L("回复邮件"), type: .small, position: CGPoint(x: 0.25, y: 0.45)),
+            Bubble(text: L("买菜"), type: .small, position: CGPoint(x: 0.7, y: 0.4)),
+            Bubble(text: L("打电话给妈妈"), type: .small, position: CGPoint(x: 0.35, y: 0.65)),
+            Bubble(text: L("整理房间"), type: .small, position: CGPoint(x: 0.65, y: 0.7))
         ]
 
         // Chat messages will be loaded from SwiftData
         chatMessages = []
+
+        // Sync subscription status from SubscriptionManager
+        SubscriptionManager.shared.$isPro
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$isPro)
 
         // Initialize sample completion data for demo
         initializeSampleData()
@@ -296,8 +340,23 @@ class AppState: ObservableObject {
         let today = Date()
 
         // Sample task texts for past days
-        let coreTasks = ["完成项目报告", "健身30分钟", "学习新技能", "写作练习", "冥想20分钟"]
-        let choreTasks = ["回复邮件", "买菜", "整理房间", "洗衣服", "倒垃圾", "做饭", "打电话", "缴费"]
+        let coreTasks = [
+            L("完成项目报告"),
+            L("健身30分钟"),
+            L("学习新技能"),
+            L("写作练习"),
+            L("冥想20分钟")
+        ]
+        let choreTasks = [
+            L("回复邮件"),
+            L("买菜"),
+            L("整理房间"),
+            L("洗衣服"),
+            L("倒垃圾"),
+            L("做饭"),
+            L("打电话"),
+            L("缴费")
+        ]
 
         // Generate sample data for past days in current month
         for dayOffset in 1...10 {
@@ -366,10 +425,57 @@ class AppState: ObservableObject {
                     date: futureDate,
                     completionType: .empty,
                     bubbles: [
-                        Bubble(text: "AI规划任务", type: .core, position: CGPoint(x: 0.5, y: 0.4))
+                        Bubble(text: L("AI规划任务"), type: .core, position: CGPoint(x: 0.5, y: 0.4))
                     ]
                 )
             }
+        }
+    }
+
+    // MARK: - Subscription Helpers
+
+    func openPaywall(_ context: PaywallContext) {
+        paywallContext = context
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            showPaywall = true
+        }
+    }
+
+    func dismissPaywall() {
+        withAnimation(.easeOut(duration: 0.25)) {
+            showPaywall = false
+        }
+    }
+
+    /// Check if free user can still send messages today
+    func canSendMessage() -> Bool {
+        if isPro { return true }
+        resetDailyCountIfNeeded()
+        return dailyMessageCount < freeMessageLimit
+    }
+
+    /// Remaining messages for today (free users)
+    var remainingMessages: Int {
+        max(freeMessageLimit - dailyMessageCount, 0)
+    }
+
+    /// Increment daily message count after a successful send
+    func incrementMessageCount() {
+        resetDailyCountIfNeeded()
+        dailyMessageCount += 1
+        UserDefaults.standard.set(dailyMessageCount, forKey: messageCountKey)
+    }
+
+    /// Reset counter if the stored date is not today
+    private func resetDailyCountIfNeeded() {
+        let today = calendar.startOfDay(for: Date())
+        let storedDate = UserDefaults.standard.object(forKey: messageCountDateKey) as? Date ?? .distantPast
+        if !calendar.isDate(storedDate, inSameDayAs: today) {
+            dailyMessageCount = 0
+            UserDefaults.standard.set(0, forKey: messageCountKey)
+            UserDefaults.standard.set(today, forKey: messageCountDateKey)
+        } else {
+            dailyMessageCount = UserDefaults.standard.integer(forKey: messageCountKey)
         }
     }
 
@@ -486,12 +592,22 @@ class AppState: ObservableObject {
 
     func navigateToNextMonth() {
         if let nextMonth = calendar.date(byAdding: .month, value: 1, to: displayedMonth) {
+            // Free users can only view the current month
+            if !isPro && !calendar.isDate(nextMonth, equalTo: Date(), toGranularity: .month) {
+                openPaywall(.calendarRestricted)
+                return
+            }
             displayedMonth = nextMonth
         }
     }
 
     func navigateToPreviousMonth() {
         if let prevMonth = calendar.date(byAdding: .month, value: -1, to: displayedMonth) {
+            // Free users can only view the current month
+            if !isPro && !calendar.isDate(prevMonth, equalTo: Date(), toGranularity: .month) {
+                openPaywall(.calendarRestricted)
+                return
+            }
             displayedMonth = prevMonth
         }
     }
@@ -543,7 +659,7 @@ class AppState: ObservableObject {
         let descriptor = FetchDescriptor<ChatMessage>()
         if let messages = try? modelContext.fetch(descriptor), messages.isEmpty {
             let welcomeMessage = ChatMessage(
-                content: "你好呀，今天想聊点什么？或者，有什么想要实现的小愿望吗？",
+                content: L("你好呀，今天想聊点什么？或者，有什么想要实现的小愿望吗？"),
                 isUser: false
             )
             modelContext.insert(welcomeMessage)
@@ -660,19 +776,19 @@ class AppState: ObservableObject {
             let goalName = try? modelContext.fetch(descriptor).first?.title ?? currentGoalName
 
             let response = try await ChatService.shared.sendMessage(
-                userText: "请为我写一封毕业信",
+                userText: L("请为我写一封毕业信"),
                 phase: .witness,
                 goalName: goalName,
                 todayTask: nil,
                 streakDays: 0,
-                context: "用户完成了全部目标任务，请生成毕业信",
+                context: L("用户完成了全部目标任务，请生成毕业信"),
                 modelContext: modelContext
             )
 
             await MainActor.run {
                 // Extract letter content from response
                 self.graduationLetterContent = response.text
-                self.graduationLetterTitle = "致亲爱的你"
+                self.graduationLetterTitle = L("致亲爱的你")
                 self.isLoadingLetter = false
 
                 // Extract identity title from letter (look for patterns like "你已成为..." or ending titles)
@@ -697,8 +813,8 @@ class AppState: ObservableObject {
             print("Failed to fetch graduation letter: \(error)")
             // Fallback: show default message
             await MainActor.run {
-                self.graduationLetterContent = "恭喜你完成了这段旅程！微光与你同在。"
-                self.graduationLetterTitle = "致亲爱的你"
+                self.graduationLetterContent = L("恭喜你完成了这段旅程！微光与你同在。")
+                self.graduationLetterTitle = L("致亲爱的你")
                 self.isLoadingLetter = false
             }
         }
@@ -708,12 +824,15 @@ class AppState: ObservableObject {
     /// Looks for patterns like "你已成为...", "成为了...", or titles at the end
     private func extractIdentityTitle(from letterContent: String) -> String {
         // Pattern 1: "你已成为[title]" or "成为了[title]"
-        if let range = letterContent.range(of: "你已成为|成为了|你是", options: .regularExpression) {
+        if let range = letterContent.range(
+            of: "你已成为|成为了|你是|You have become|You've become|You are|Now you are",
+            options: .regularExpression
+        ) {
             let startIndex = letterContent.index(range.upperBound, offsetBy: 0)
             let remaining = String(letterContent[startIndex...])
 
             // Extract until punctuation or newline
-            if let endRange = remaining.rangeOfCharacter(from: CharacterSet(charactersIn: "。，、！\n")) {
+            if let endRange = remaining.rangeOfCharacter(from: CharacterSet(charactersIn: "。，、！,.!?\n")) {
                 let title = String(remaining[..<endRange.lowerBound]).trimmingCharacters(in: .whitespaces)
                 if !title.isEmpty && title.count < 20 {
                     return title
@@ -736,7 +855,7 @@ class AppState: ObservableObject {
         }
 
         // Fallback: Generic title based on goal
-        return "微光践行者"
+        return L("微光践行者")
     }
 
     /// Reset to onboarding phase after graduation (start new cycle)
@@ -1131,7 +1250,7 @@ struct SplashView: View {
     @State private var pulseAnimation = false
     @State private var showQuote = false
 
-    private let dailyMessage = "点亮微小的日常。"
+    private let dailyMessage = L("点亮微小的日常。")
     private let maxBubbleScale: CGFloat = 4.5
 
     var body: some View {
@@ -1374,6 +1493,7 @@ struct HomeView: View {
     @State private var snoozeHintText = ""
     @State private var isDraggingBubble = false  // Track when user is dragging a bubble
     @State private var showResetConfirmation = false
+    @State private var showSettings = false
 
     // Task input state
     @State private var showTaskInput = false
@@ -1396,16 +1516,16 @@ struct HomeView: View {
 
     private var selectedDateString: String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "M月d日"
-        formatter.locale = Locale(identifier: "zh_Hans")
+        formatter.locale = Locale.current
+        formatter.setLocalizedDateFormatFromTemplate("MMM d")
         return formatter.string(from: appState.selectedDate)
     }
 
     private var temporalModeLabel: String {
         switch appState.currentTemporalMode {
-        case .past: return "回顾"
-        case .today: return "今天"
-        case .future: return "计划"
+        case .past: return L("回顾")
+        case .today: return L("今天")
+        case .future: return L("计划")
         }
     }
 
@@ -1508,6 +1628,12 @@ struct HomeView: View {
             }
             .fullScreenCover(isPresented: $appState.showLetterView) {
                 LetterView(appState: appState, modelContext: modelContext)
+            }
+            .sheet(isPresented: $showSettings) {
+                SettingsView()
+                    .environmentObject(appState)
+                    .environmentObject(SupabaseManager.shared)
+                    .modelContext(modelContext)
             }
         }
     }
@@ -1648,20 +1774,36 @@ struct HomeView: View {
 
             Spacer()
 
-            // Archive button with soft glow halo (sparkles icon)
-            Button(action: { appState.openArchive() }) {
-                ZStack {
-                    // Soft glow halo
-                    Circle()
-                        .fill(Color.white.opacity(0.3))
-                        .frame(width: 50, height: 50)
-                        .blur(radius: 8)
+            // Archive + Settings buttons
+            HStack(spacing: 12) {
+                Button(action: { showSettings = true }) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.white.opacity(0.3))
+                            .frame(width: 50, height: 50)
+                            .blur(radius: 8)
 
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 20))
-                        .foregroundColor(Color(hex: "6B6B6B"))
-                        .frame(width: 40, height: 40)
-                        .background(Circle().fill(.ultraThinMaterial))
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 18))
+                            .foregroundColor(Color(hex: "6B6B6B"))
+                            .frame(width: 40, height: 40)
+                            .background(Circle().fill(.ultraThinMaterial))
+                    }
+                }
+
+                Button(action: { appState.openArchive() }) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.white.opacity(0.3))
+                            .frame(width: 50, height: 50)
+                            .blur(radius: 8)
+
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 20))
+                            .foregroundColor(Color(hex: "6B6B6B"))
+                            .frame(width: 40, height: 40)
+                            .background(Circle().fill(.ultraThinMaterial))
+                    }
                 }
             }
         }
@@ -1787,7 +1929,7 @@ struct HomeView: View {
 
             // Input card
             VStack(spacing: 20) {
-                Text(appState.currentTemporalMode == .future ? "添加未来计划" : "新建琐事")
+                Text(appState.currentTemporalMode == .future ? L("添加未来计划") : L("新建琐事"))
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(Color(hex: "6B6B6B"))
 
@@ -2089,12 +2231,12 @@ struct HomeView: View {
 
         // Silent Narrator: Get encouragement from AI (with guaranteed fallback)
         let fallbackMessages = [
-            "微光虽小，但你把它点亮了。",
-            "又一颗星尘，正在汇聚成光。",
-            "做得好！保持节奏。",
-            "每一步，都是向着光的方向。",
-            "很棒！继续加油！",
-            "坚持的你，正在发光。"
+            L("微光虽小，但你把它点亮了。"),
+            L("又一颗星尘，正在汇聚成光。"),
+            L("做得好！保持节奏。"),
+            L("每一步，都是向着光的方向。"),
+            L("很棒！继续加油！"),
+            L("坚持的你，正在发光。")
         ]
 
         Task {
@@ -2108,7 +2250,7 @@ struct HomeView: View {
                     goalName: goalName,
                     todayTask: todayTask,
                     streakDays: streakDays,
-                    context: "用户完成了任务：\(bubble.text)"
+                    context: L("用户完成了任务：%@", bubble.text)
                 )
 
                 await MainActor.run {
@@ -2140,11 +2282,11 @@ struct HomeView: View {
 
         // Silent Narrator: Get encouragement for postponing (with fallback)
         let fallbackMessages = [
-            "允许暂停，也是一种前进。",
-            "明天的你，会感谢今天的安排。",
-            "休息是为了走更远的路。",
-            "调整节奏，不是放弃。",
-            "给自己一些喘息的空间。"
+            L("允许暂停，也是一种前进。"),
+            L("明天的你，会感谢今天的安排。"),
+            L("休息是为了走更远的路。"),
+            L("调整节奏，不是放弃。"),
+            L("给自己一些喘息的空间。")
         ]
 
         Task {
@@ -2158,7 +2300,7 @@ struct HomeView: View {
                     goalName: goalName,
                     todayTask: todayTask,
                     streakDays: streakDays,
-                    context: "用户将任务「\(bubble.text)」推迟到明天"
+                    context: L("用户将任务「%@」推迟到明天", bubble.text)
                 )
 
                 await MainActor.run {
@@ -2174,7 +2316,7 @@ struct HomeView: View {
         }
 
         // Also show the snooze hint UI
-        snoozeHintText = "「\(bubble.text)」已转为明日待办"
+        snoozeHintText = L("「%@」已转为明日待办", bubble.text)
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             showSnoozeHint = true
         }
@@ -2193,9 +2335,9 @@ struct HomeView: View {
         // TODO: Fetch real goal data from SwiftData when Goal system is fully integrated
         // For now, show placeholder data
         appState.showTaskDetailOverlay(
-            goalTitle: appState.currentGoalName ?? "未设置目标",
-            phaseName: "习惯养成期",
-            description: bubble.text + "\n\n这是一个核心任务，需要每日完成。长期坚持将帮助你实现目标。",
+            goalTitle: appState.currentGoalName ?? L("未设置目标"),
+            phaseName: L("习惯养成期"),
+            description: bubble.text + "\n\n" + L("这是一个核心任务，需要每日完成。长期坚持将帮助你实现目标。"),
             color: "FFD700"
         )
     }
@@ -3335,7 +3477,7 @@ struct ChatView: View {
 
             // Done button - standard iOS style
             Button(action: dismissChat) {
-                Text("完成")
+                Text(L("完成"))
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(Color(hex: "5C5C5C"))
             }
@@ -3353,7 +3495,7 @@ struct ChatView: View {
 
             HStack(spacing: 10) {
                 // Capsule text field
-                TextField("说说你的想法...", text: $inputText, axis: .vertical)
+                TextField(L("说说你的想法..."), text: $inputText, axis: .vertical)
                     .lineLimit(1...5)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
@@ -3417,7 +3559,7 @@ struct ChatView: View {
                 .id(message.id)
             case .failure(let errorMsg):
                 ContractErrorCard(errorMessage: errorMsg) {
-                    inputText = "请重新生成愿景契约"
+                    inputText = L("请重新生成愿景契约")
                     sendMessage()
                 }
                 .id(message.id)
@@ -3461,6 +3603,13 @@ struct ChatView: View {
 
     private func sendMessage() {
         guard !inputText.isEmpty else { return }
+
+        // Check AI message quota for free users
+        if !appState.isPro && !appState.canSendMessage() {
+            appState.openPaywall(.aiMessageLimit)
+            return
+        }
+
         let messageText = inputText
         inputText = ""
 
@@ -3501,6 +3650,12 @@ struct ChatView: View {
                         handleActionCommand(actionResponse)
                     }
 
+                    // Track message count for free users
+                    appState.incrementMessageCount()
+                    if !appState.isPro && appState.remainingMessages <= 2 && appState.remainingMessages > 0 {
+                        appState.showBanner(message: L("今天还剩 %d 次对话", appState.remainingMessages))
+                    }
+
                     // Reload chat messages from SwiftData
                     appState.reloadChatMessages(from: modelContext)
 
@@ -3523,7 +3678,7 @@ struct ChatView: View {
                 await MainActor.run {
                     isThinking = false
                     // Show error message or fallback
-                    let errorMessage = "抱歉，我暂时无法回应。请稍后再试。"
+                    let errorMessage = L("抱歉，我暂时无法回应。请稍后再试。")
                     let errorChatMessage = ChatMessage(content: errorMessage, isUser: false)
                     modelContext.insert(errorChatMessage)
                     try? modelContext.save()
@@ -3743,7 +3898,7 @@ struct ChatView: View {
 
     /// Send confirmation message
     private func sendConfirmation() {
-        inputText = "确认"
+        inputText = L("确认")
         sendMessage()
     }
 
@@ -3761,12 +3916,12 @@ struct ChatView: View {
 
                 // Send hidden request for graduation letter
                 let response = try await ChatService.shared.sendMessage(
-                    userText: "请为我写一封毕业信", // Hidden trigger message
+                    userText: L("请为我写一封毕业信"), // Hidden trigger message
                     phase: .witness,
                     goalName: goalName,
                     todayTask: todayTask,
                     streakDays: streakDays,
-                    context: "用户完成了全部目标任务，请生成毕业信",
+                    context: L("用户完成了全部目标任务，请生成毕业信"),
                     modelContext: modelContext
                 )
 
@@ -3779,7 +3934,7 @@ struct ChatView: View {
             } catch {
                 await MainActor.run {
                     isThinking = false
-                    let errorMessage = "抱歉，暂时无法生成毕业信。请稍后再试。"
+                    let errorMessage = L("抱歉，暂时无法生成毕业信。请稍后再试。")
                     let errorChatMessage = ChatMessage(content: errorMessage, isUser: false)
                     modelContext.insert(errorChatMessage)
                     try? modelContext.save()
@@ -4425,7 +4580,12 @@ struct CalendarView: View {
     @Namespace private var calendarAnimation
 
     let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 7)
-    let weekdays = ["日", "一", "二", "三", "四", "五", "六"]
+    private let weekdays: [String] = {
+        let calendar = Calendar.current
+        let symbols = calendar.veryShortWeekdaySymbols
+        let firstIndex = max(calendar.firstWeekday - 1, 0)
+        return Array(symbols[firstIndex...] + symbols[..<firstIndex])
+    }()
 
     @State private var calendarDays: [CalendarDay] = []
     @State private var dragOffset: CGFloat = 0
@@ -4589,43 +4749,43 @@ struct CalendarView: View {
         var color = "FFD700"
 
         if day.isFuture {
-            phaseName = "计划中"
+            phaseName = L("计划中")
             color = "87CEEB"
             if bubbles.isEmpty {
-                taskDescription = "这一天还没有安排任务。"
+                taskDescription = L("这一天还没有安排任务。")
             } else {
                 let taskTexts = bubbles.map { "• \($0.text)" }.joined(separator: "\n")
-                taskDescription = "已规划的任务：\n\n\(taskTexts)"
+                taskDescription = L("已规划的任务：\n\n%@", taskTexts)
             }
         } else if day.isPast {
             switch day.completionType {
             case .coreCompleted:
-                phaseName = "已完成 ✨"
+                phaseName = L("已完成 ✨")
                 color = "FFD700"
                 let taskTexts = bubbles.map { "• \($0.text)" }.joined(separator: "\n")
-                taskDescription = bubbles.isEmpty ? "这一天完成了核心任务！" : "完成的任务：\n\n\(taskTexts)"
+                taskDescription = bubbles.isEmpty ? L("这一天完成了核心任务！") : L("完成的任务：\n\n%@", taskTexts)
             case .choreOnly:
-                phaseName = "小进步"
+                phaseName = L("小进步")
                 color = "CBA972"
                 let taskTexts = bubbles.map { "• \($0.text)" }.joined(separator: "\n")
-                taskDescription = bubbles.isEmpty ? "这一天完成了一些小任务。" : "完成的任务：\n\n\(taskTexts)"
+                taskDescription = bubbles.isEmpty ? L("这一天完成了一些小任务。") : L("完成的任务：\n\n%@", taskTexts)
             case .empty:
-                phaseName = "休息日"
+                phaseName = L("休息日")
                 color = "888888"
-                taskDescription = "这一天没有记录到任务。"
+                taskDescription = L("这一天没有记录到任务。")
             }
         } else {
             // Today - shouldn't normally be triggered from calendar
-            phaseName = "今天"
+            phaseName = L("今天")
             color = "FFD700"
             let taskTexts = bubbles.map { "• \($0.text)" }.joined(separator: "\n")
-            taskDescription = bubbles.isEmpty ? "今天的任务还没有设置。" : "今天的任务：\n\n\(taskTexts)"
+            taskDescription = bubbles.isEmpty ? L("今天的任务还没有设置。") : L("今天的任务：\n\n%@", taskTexts)
         }
 
         // Format date
         let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "M月d日"
-        dateFormatter.locale = Locale(identifier: "zh_Hans")
+        dateFormatter.locale = Locale.current
+        dateFormatter.setLocalizedDateFormatFromTemplate("MMM d")
         let dateString = dateFormatter.string(from: day.date)
 
         // Show the overlay
@@ -4639,8 +4799,8 @@ struct CalendarView: View {
 
     private var monthYearString: String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy年 M月"
-        formatter.locale = Locale(identifier: "zh_Hans")
+        formatter.locale = Locale.current
+        formatter.setLocalizedDateFormatFromTemplate("yyyy MMM")
         return formatter.string(from: appState.displayedMonth)
     }
 
@@ -4938,7 +5098,7 @@ struct CalendarDayCell: View {
 
 // MARK: - Calendar Quote View (Typewriter Effect)
 struct CalendarQuoteView: View {
-    let quote = "看见每一步的微光。"
+    let quote = L("看见每一步的微光。")
     @State private var displayedText: String = ""
     @State private var isAnimating: Bool = false
 
@@ -5026,44 +5186,44 @@ struct ArchiveView: View {
     // Fallback: 示例完成目标（如果没有真实数据）
     private let sampleGoals: [CompletedGoal] = [
         CompletedGoal(
-            title: "完成第一本小说",
-            aiWitnessText: "日复一日的书写中，碎片化的想法逐渐凝聚成完整的故事。",
-            season: "2024 春",
+            title: L("完成第一本小说"),
+            aiWitnessText: L("日复一日的书写中，碎片化的想法逐渐凝聚成完整的故事。"),
+            season: L("2024 春"),
             position: CGPoint(x: 0.5, y: 0.0),
             color: Color(hex: "FFD700")
         ),
         CompletedGoal(
-            title: "30天冥想之旅",
-            aiWitnessText: "每个清晨的呼吸，都成为了稳定心绪的锚点，平息着思绪的波澜。",
-            season: "2025 冬",
+            title: L("30天冥想之旅"),
+            aiWitnessText: L("每个清晨的呼吸，都成为了稳定心绪的锚点，平息着思绪的波澜。"),
+            season: L("2025 冬"),
             position: CGPoint(x: 0.5, y: 0.2),
             color: Color(hex: "87CEEB")
         ),
         CompletedGoal(
-            title: "学会钢琴基础",
-            aiWitnessText: "手指在琴键上找到了自己的声音，将寂静转化为旋律。",
-            season: "2024 秋",
+            title: L("学会钢琴基础"),
+            aiWitnessText: L("手指在琴键上找到了自己的声音，将寂静转化为旋律。"),
+            season: L("2024 秋"),
             position: CGPoint(x: 0.5, y: 0.4),
             color: Color(hex: "DDA0DD")
         ),
         CompletedGoal(
-            title: "阅读50本书",
-            aiWitnessText: "一个个世界如同石块般堆叠，搭建起通往理解的桥梁。",
-            season: "2025 夏",
+            title: L("阅读50本书"),
+            aiWitnessText: L("一个个世界如同石块般堆叠，搭建起通往理解的桥梁。"),
+            season: L("2025 夏"),
             position: CGPoint(x: 0.5, y: 0.6),
             color: Color(hex: "CBA972")
         ),
         CompletedGoal(
-            title: "晨间仪式",
-            aiWitnessText: "黎明又黎明，微小的仪式编织出蜕变人生的织锦。",
-            season: "2025 春",
+            title: L("晨间仪式"),
+            aiWitnessText: L("黎明又黎明，微小的仪式编织出蜕变人生的织锦。"),
+            season: L("2025 春"),
             position: CGPoint(x: 0.5, y: 0.8),
             color: Color(hex: "FFB6C1")
         ),
         CompletedGoal(
-            title: "健康饮食挑战",
-            aiWitnessText: "每一餐的选择，都是对自己身体的温柔对话。",
-            season: "2024 夏",
+            title: L("健康饮食挑战"),
+            aiWitnessText: L("每一餐的选择，都是对自己身体的温柔对话。"),
+            season: L("2024 夏"),
             position: CGPoint(x: 0.5, y: 1.0),
             color: Color(hex: "98D8C8")
         )
@@ -5132,6 +5292,11 @@ struct ArchiveView: View {
                             xOffset: scatterOffsets[index % scatterOffsets.count]
                         )
                         .onTapGesture {
+                            // Free users cannot read archive details
+                            if !appState.isPro {
+                                appState.openPaywall(.archiveLocked)
+                                return
+                            }
                             withAnimation(.easeOut(duration: 0.3)) {
                                 selectedGoal = goal
                                 showOverlay = true
@@ -5219,13 +5384,117 @@ struct ArchiveView: View {
 
         let season: String
         switch month {
-        case 12, 1, 2: season = "冬"
-        case 3, 4, 5: season = "春"
-        case 6, 7, 8: season = "夏"
-        default: season = "秋"
+        case 12, 1, 2: season = L("冬")
+        case 3, 4, 5: season = L("春")
+        case 6, 7, 8: season = L("夏")
+        default: season = L("秋")
         }
 
-        return "\(year) \(season)"
+        return L("%d %@", year, season)
+    }
+}
+
+// MARK: - Settings View
+struct SettingsView: View {
+    @EnvironmentObject var appState: AppState
+    @EnvironmentObject var supabaseManager: SupabaseManager
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var showDeleteConfirmation = false
+    @State private var isDeleting = false
+    @State private var showDeleteSuccess = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section(header: Text(L("信息与支持"))) {
+                    if let url = AppLinks.privacyPolicyURL {
+                        Link(destination: url) {
+                            Label(L("隐私政策"), systemImage: "hand.raised")
+                        }
+                    } else {
+                        Label(L("隐私政策"), systemImage: "hand.raised")
+                            .foregroundColor(.secondary)
+                    }
+
+                    if let url = AppLinks.technicalSupportURL {
+                        Link(destination: url) {
+                            Label(L("技术支持"), systemImage: "questionmark.circle")
+                        }
+                    } else {
+                        Label(L("技术支持"), systemImage: "questionmark.circle")
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Section(header: Text(L("账号与数据"))) {
+                    Button(role: .destructive) {
+                        showDeleteConfirmation = true
+                    } label: {
+                        Label(L("删除账号与数据"), systemImage: "trash")
+                    }
+                    Text(L("此操作会删除本地与云端数据，并退出登录。"))
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .navigationTitle(L("设置"))
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(L("完成")) { dismiss() }
+                }
+            }
+            .confirmationDialog(
+                L("删除账号与数据"),
+                isPresented: $showDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(L("确认删除"), role: .destructive) {
+                    deleteAccountAndData()
+                }
+                Button(L("取消"), role: .cancel) {}
+            } message: {
+                Text(L("此操作将删除你的账号与数据，且不可撤销。"))
+            }
+            .alert(L("删除成功"), isPresented: $showDeleteSuccess) {
+                Button(L("完成")) { dismiss() }
+            } message: {
+                Text(L("你的账号与数据已删除。"))
+            }
+            .overlay {
+                if isDeleting {
+                    ZStack {
+                        Color.black.opacity(0.2).ignoresSafeArea()
+                        ProgressView(L("正在删除..."))
+                            .padding(20)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.white)
+                            )
+                    }
+                }
+            }
+        }
+    }
+
+    private func deleteAccountAndData() {
+        guard !isDeleting else { return }
+        isDeleting = true
+
+        Task {
+            // Delete local data first
+            appState.resetAllData(modelContext: modelContext)
+
+            // Delete remote data then sign out
+            await supabaseManager.deleteUserData()
+            await supabaseManager.signOut()
+
+            await MainActor.run {
+                isDeleting = false
+                showDeleteSuccess = true
+            }
+        }
     }
 }
 

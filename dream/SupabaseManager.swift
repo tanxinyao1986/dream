@@ -64,6 +64,39 @@ final class SupabaseManager: ObservableObject {
         print("SupabaseManager: ✅ Signed in as \(session.user.id)")
     }
 
+    // MARK: - Account & Data Management
+
+    func signOut() async {
+        do {
+            try await client.auth.signOut()
+            isAuthenticated = false
+            print("SupabaseManager: ✅ Signed out")
+        } catch {
+            print("SupabaseManager: ⚠️ Failed to sign out: \(error.localizedDescription)")
+        }
+    }
+
+    func deleteUserData() async {
+        do {
+            let userId = try await client.auth.session.user.id.uuidString
+
+            // Delete user-scoped records (RLS must allow owner delete)
+            try await client.from("daily_tasks")
+                .delete()
+                .eq("user_id", value: userId)
+                .execute()
+
+            try await client.from("daily_reflections")
+                .delete()
+                .eq("user_id", value: userId)
+                .execute()
+
+            print("SupabaseManager: ✅ Deleted user data for \(userId)")
+        } catch {
+            print("SupabaseManager: ⚠️ Failed to delete user data: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Data Reporting
 
     func reportTaskCompletion(title: String, scheduledDate: Date) {

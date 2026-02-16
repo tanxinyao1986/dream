@@ -126,24 +126,24 @@ final class ChatService {
     /// Pre-defined encouragement messages to avoid API calls for common silent events
     private static let encouragementPool: [String: [String]] = [
         "completed": [
-            "微光虽小，但你把它点亮了。",
-            "又一束光，被你收入囊中。",
-            "今天的你，闪闪发光。",
-            "每一步微光，都在凝聚力量。",
-            "光球已亮，你真的做到了。",
-            "坚持本身，就是最美的光。",
-            "你的努力，微光都看见了。",
-            "一点一滴，终将汇成星河。"
+            L("微光虽小，但你把它点亮了。"),
+            L("又一束光，被你收入囊中。"),
+            L("今天的你，闪闪发光。"),
+            L("每一步微光，都在凝聚力量。"),
+            L("光球已亮，你真的做到了。"),
+            L("坚持本身，就是最美的光。"),
+            L("你的努力，微光都看见了。"),
+            L("一点一滴，终将汇成星河。")
         ],
         "delay": [
-            "允许暂停，也是一种前进。",
-            "休息不是放弃，是为了走更远。",
-            "没关系，明天的光还在等你。",
-            "暂时停下也好，月亮也有阴晴。",
-            "偶尔休息，让微光陪你。",
-            "给自己一点温柔的时间。",
-            "放慢脚步，也是一种勇气。",
-            "别急，光会等你准备好。"
+            L("允许暂停，也是一种前进。"),
+            L("休息不是放弃，是为了走更远。"),
+            L("没关系，明天的光还在等你。"),
+            L("暂时停下也好，月亮也有阴晴。"),
+            L("偶尔休息，让微光陪你。"),
+            L("给自己一点温柔的时间。"),
+            L("放慢脚步，也是一种勇气。"),
+            L("别急，光会等你准备好。")
         ]
     ]
 
@@ -294,7 +294,7 @@ final class ChatService {
 
         let messages: [[String: String]] = [
             ["role": "system", "content": systemPrompt],
-            ["role": "user", "content": "请根据事件生成一条简短的鼓励语。"]
+            ["role": "user", "content": L("请根据事件生成一条简短的鼓励语。")]
         ]
 
         let responseText = try await makeAPIRequest(messages: messages)

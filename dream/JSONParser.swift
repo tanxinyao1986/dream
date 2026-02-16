@@ -139,7 +139,7 @@ struct GoalBlueprint: Codable {
             } else if let label = try? container.decode(String.self, forKey: .dailyTaskLabelAlt) {
                 self.dailyTaskLabel = label
             } else {
-                self.dailyTaskLabel = "今日任务" // Default fallback
+                self.dailyTaskLabel = L("今日任务") // Default fallback
             }
 
             // Daily task detail: try daily_task_detail first, then task_detail
@@ -373,7 +373,7 @@ final class JSONParser {
         // Try to extract JSON from markdown code blocks
         guard let jsonString = extractJSONString(from: text) else {
             // No JSON found - this is expected for regular conversation
-            return .failure("未找到JSON数据块")
+            return .failure(L("未找到JSON数据块"))
         }
 
         // Clean the JSON string
@@ -382,7 +382,7 @@ final class JSONParser {
 
         // Try to parse
         guard let data = cleanedJSON.data(using: .utf8) else {
-            let errorMsg = "JSON编码失败"
+            let errorMsg = L("JSON编码失败")
             print("JSONParser: ❌ \(errorMsg)")
             return .failure(errorMsg)
         }
@@ -398,7 +398,7 @@ final class JSONParser {
             print("JSONParser: Raw JSON was: \(cleanedJSON.prefix(500))...")
             return .failure(errorMsg)
         } catch {
-            let errorMsg = "解析失败: \(error.localizedDescription)"
+            let errorMsg = L("解析失败: %@", error.localizedDescription)
             print("JSONParser: ❌ \(errorMsg)")
             return .failure(errorMsg)
         }
@@ -508,19 +508,27 @@ final class JSONParser {
 
     // MARK: - Private Helper Methods
 
-    /// Describe a DecodingError in user-friendly Chinese
+    /// Describe a DecodingError in user-friendly text
     private static func describeDecodingError(_ error: DecodingError) -> String {
         switch error {
         case .keyNotFound(let key, _):
-            return "缺少字段: \(key.stringValue)"
+            return L("缺少字段: %@", key.stringValue)
         case .typeMismatch(let type, let context):
-            return "类型错误: 期望\(type), 位置: \(context.codingPath.map { $0.stringValue }.joined(separator: "."))"
+            return L(
+                "类型错误: 期望%@, 位置: %@",
+                String(describing: type),
+                context.codingPath.map { $0.stringValue }.joined(separator: ".")
+            )
         case .valueNotFound(let type, let context):
-            return "值缺失: \(type), 位置: \(context.codingPath.map { $0.stringValue }.joined(separator: "."))"
+            return L(
+                "值缺失: %@, 位置: %@",
+                String(describing: type),
+                context.codingPath.map { $0.stringValue }.joined(separator: ".")
+            )
         case .dataCorrupted(let context):
-            return "数据损坏: \(context.debugDescription)"
+            return L("数据损坏: %@", context.debugDescription)
         @unknown default:
-            return "未知解码错误"
+            return L("未知解码错误")
         }
     }
 
