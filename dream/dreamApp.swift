@@ -5409,6 +5409,42 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                // MARK: - Membership Status
+                Section(header: Text(L("会员状态"))) {
+                    HStack {
+                        Image(systemName: appState.isPro ? "star.fill" : "star")
+                            .foregroundColor(appState.isPro ? Color(hex: "CBA972") : .secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(appState.isPro ? L("追光者") : L("微光伙伴"))
+                                .font(.body)
+                            Text(appState.isPro ? L("已解锁全部权益") : L("基础版"))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        if !appState.isPro {
+                            Button(L("升级")) {
+                                dismiss()
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    appState.openPaywall(.aiMessageLimit)
+                                }
+                            }
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(Color(hex: "CBA972"))
+                        }
+                    }
+
+                    if !appState.isPro {
+                        Button {
+                            Task {
+                                await SubscriptionManager.shared.restorePurchases()
+                            }
+                        } label: {
+                            Label(L("恢复订阅"), systemImage: "arrow.clockwise")
+                        }
+                    }
+                }
+
                 Section(header: Text(L("信息与支持"))) {
                     Button {
                         activeLegalPage = .privacy
@@ -5421,6 +5457,12 @@ struct SettingsView: View {
                     } label: {
                         Label(L("技术支持"), systemImage: "questionmark.circle")
                     }
+                }
+
+                Section(header: Text(L("免责声明"))) {
+                    Text(L("AI 生成内容仅用于目标规划参考，不构成专业建议。请自行判断。"))
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
                 }
 
                 Section(header: Text(L("账号与数据"))) {
