@@ -31,6 +31,7 @@ class SubscriptionManager: ObservableObject {
     @Published var isPro: Bool = false
     @Published var products: [Product] = []
 
+    private let forceFreeModeKey = "forceFreeMode"
     private var updateListenerTask: Task<Void, Never>?
 
     private init() {
@@ -105,9 +106,19 @@ class SubscriptionManager: ObservableObject {
         await updateSubscriptionStatus()
     }
 
+    func setForceFreeMode(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: forceFreeModeKey)
+        Task { await updateSubscriptionStatus() }
+    }
+
     // MARK: - Status Check
 
     private func updateSubscriptionStatus() async {
+        if UserDefaults.standard.bool(forKey: forceFreeModeKey) {
+            isPro = false
+            return
+        }
+
         var hasActiveSubscription = false
 
         for await result in Transaction.currentEntitlements {

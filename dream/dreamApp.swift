@@ -196,6 +196,9 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.3), value: appState.showConfetti)
         .animation(.easeInOut(duration: 0.3), value: appState.showMoodPicker)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: appState.showPaywall)
+        .fullScreenCover(isPresented: $appState.showOnboardingGuide) {
+            OnboardingGuideView(isFromSettings: false)
+        }
     }
 
     /// Count today's total and completed tasks from the active goal
@@ -244,6 +247,7 @@ struct DayCompletion: Identifiable {
 
 class AppState: ObservableObject {
     @Published var showSplash: Bool = true
+    @Published var showOnboardingGuide: Bool = false
     @Published var showCalendar: Bool = false
     @Published var showChat: Bool = false
     @Published var showArchive: Bool = false
@@ -316,13 +320,8 @@ class AppState: ObservableObject {
     }()
 
     init() {
-        bubbles = [
-            Bubble(text: L("每天写500字"), type: .core, position: CGPoint(x: 0.5, y: 0.3)),
-            Bubble(text: L("回复邮件"), type: .small, position: CGPoint(x: 0.25, y: 0.45)),
-            Bubble(text: L("买菜"), type: .small, position: CGPoint(x: 0.7, y: 0.4)),
-            Bubble(text: L("打电话给妈妈"), type: .small, position: CGPoint(x: 0.35, y: 0.65)),
-            Bubble(text: L("整理房间"), type: .small, position: CGPoint(x: 0.65, y: 0.7))
-        ]
+        // Start with empty bubbles - real tasks loaded from SwiftData when goal exists
+        bubbles = []
 
         // Chat messages will be loaded from SwiftData
         chatMessages = []
@@ -331,105 +330,6 @@ class AppState: ObservableObject {
         SubscriptionManager.shared.$isPro
             .receive(on: DispatchQueue.main)
             .assign(to: &$isPro)
-
-        // Initialize sample completion data for demo
-        initializeSampleData()
-    }
-
-    private func initializeSampleData() {
-        let today = Date()
-
-        // Sample task texts for past days
-        let coreTasks = [
-            L("完成项目报告"),
-            L("健身30分钟"),
-            L("学习新技能"),
-            L("写作练习"),
-            L("冥想20分钟")
-        ]
-        let choreTasks = [
-            L("回复邮件"),
-            L("买菜"),
-            L("整理房间"),
-            L("洗衣服"),
-            L("倒垃圾"),
-            L("做饭"),
-            L("打电话"),
-            L("缴费")
-        ]
-
-        // Generate sample data for past days in current month
-        for dayOffset in 1...10 {
-            if let pastDate = calendar.date(byAdding: .day, value: -dayOffset, to: today) {
-                let key = dateFormatter.string(from: pastDate)
-                let random = Double.random(in: 0...1)
-
-                var completionType: DayCompletionType
-                var dayBubbles: [Bubble] = []
-
-                if random < 0.2 {
-                    // Empty day - no bubbles
-                    completionType = .empty
-                } else if random < 0.5 {
-                    // Chore-only day - 2-4 chore bubbles
-                    completionType = .choreOnly
-                    let choreCount = Int.random(in: 2...4)
-                    for i in 0..<choreCount {
-                        let task = choreTasks[Int.random(in: 0..<choreTasks.count)]
-                        dayBubbles.append(Bubble(
-                            text: task,
-                            type: .small,
-                            position: CGPoint(
-                                x: 0.2 + Double.random(in: 0...0.6),
-                                y: 0.25 + Double(i) * 0.15 + Double.random(in: -0.05...0.05)
-                            )
-                        ))
-                    }
-                } else {
-                    // Core completed day - 1 core + 1-3 chores
-                    completionType = .coreCompleted
-                    let coreTask = coreTasks[Int.random(in: 0..<coreTasks.count)]
-                    dayBubbles.append(Bubble(
-                        text: coreTask,
-                        type: .core,
-                        position: CGPoint(x: 0.5, y: 0.35)
-                    ))
-
-                    let choreCount = Int.random(in: 1...3)
-                    for i in 0..<choreCount {
-                        let task = choreTasks[Int.random(in: 0..<choreTasks.count)]
-                        dayBubbles.append(Bubble(
-                            text: task,
-                            type: .small,
-                            position: CGPoint(
-                                x: 0.25 + Double(i) * 0.25,
-                                y: 0.55 + Double.random(in: -0.05...0.1)
-                            )
-                        ))
-                    }
-                }
-
-                dayCompletions[key] = DayCompletion(
-                    date: pastDate,
-                    completionType: completionType,
-                    bubbles: dayBubbles
-                )
-            }
-        }
-
-        // Add some AI-planned future tasks
-        for dayOffset in [2, 5, 7] {
-            if let futureDate = calendar.date(byAdding: .day, value: dayOffset, to: today) {
-                let key = dateFormatter.string(from: futureDate)
-                dayCompletions[key] = DayCompletion(
-                    date: futureDate,
-                    completionType: .empty,
-                    bubbles: [
-                        Bubble(text: L("AI规划任务"), type: .core, position: CGPoint(x: 0.5, y: 0.4))
-                    ]
-                )
-            }
-        }
     }
 
     // MARK: - Subscription Helpers
@@ -479,7 +379,13 @@ class AppState: ObservableObject {
         }
     }
 
-    func enterHome() { showSplash = false }
+    func enterHome() {
+        showSplash = false
+        // Show onboarding guide for first-time users
+        if !UserDefaults.standard.bool(forKey: "hasSeenOnboarding") {
+            showOnboardingGuide = true
+        }
+    }
     func openCalendar() { showCalendar = true }
     func closeCalendar() {
         showCalendar = false
@@ -885,6 +791,15 @@ class AppState: ObservableObject {
 
     /// Completely reset all data and return to initial state (new user experience)
     func resetAllData(modelContext: ModelContext) {
+        resetAllData(modelContext: modelContext, initializeWelcomeMessage: true)
+    }
+
+    /// Reset to fresh user state (no subscription, no chat, no plans)
+    func resetForFreshUser(modelContext: ModelContext) {
+        resetAllData(modelContext: modelContext, initializeWelcomeMessage: false)
+    }
+
+    private func resetAllData(modelContext: ModelContext, initializeWelcomeMessage: Bool) {
         print("AppState: 🗑️ Resetting ALL data to initial state")
 
         // Delete all Goal records (cascade deletes Phase + DailyTask)
@@ -912,17 +827,33 @@ class AppState: ObservableObject {
         currentGoalName = nil
         currentPhase = .onboarding
         isRestartingAfterCompletion = false
+        showChat = false
+        showArchive = false
+        showCalendar = false
+        showTaskDetail = false
+        showLetterView = false
+        showLetterEnvelope = false
+        isLoadingLetter = false
+        todayMoodRecorded = false
 
         // Clear graduation letter state
         graduationLetterContent = ""
         graduationLetterTitle = ""
+
+        // Reset daily message counter and onboarding flag
+        UserDefaults.standard.removeObject(forKey: messageCountKey)
+        UserDefaults.standard.removeObject(forKey: messageCountDateKey)
+        UserDefaults.standard.removeObject(forKey: "hasSeenOnboarding")
+        dailyMessageCount = 0
 
         // Save deletions
         try? modelContext.save()
 
         // Reload and initialize welcome message
         reloadChatMessages(from: modelContext)
-        initializeWelcomeMessageIfNeeded(modelContext: modelContext)
+        if initializeWelcomeMessage {
+            initializeWelcomeMessageIfNeeded(modelContext: modelContext)
+        }
 
         // Notify UI
         NotificationCenter.default.post(name: .goalDataDidChange, object: nil)
@@ -1254,9 +1185,13 @@ struct SplashView: View {
     @State private var showBurstEffect = false
     @State private var pulseAnimation = false
     @State private var showQuote = false
+    @State private var guideRingScale: CGFloat = 1.0
+    @State private var guideRingOpacity: Double = 0.6
+    @State private var progressTrim: CGFloat = 0.0
 
     private let dailyMessage = L("点亮微小的日常。")
     private let maxBubbleScale: CGFloat = 4.5
+    private let pressDuration: Double = 2.5
 
     var body: some View {
         ZStack {
@@ -1277,16 +1212,17 @@ struct SplashView: View {
             .animation(.easeInOut(duration: 7).repeatForever(autoreverses: true), value: pulseAnimation)
             .onAppear {
                 pulseAnimation = true
+                startGuideRingPulse()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     showQuote = true
                 }
             }
 
             VStack(spacing: 60) {
-                Spacer()
+                Spacer(minLength: 6)
 
                 // App Name: 微光计划
-                Text("微光计划")
+                Text(L("微光计划"))
                     .font(.system(size: 40, weight: .light, design: .rounded))
                     .kerning(10)
                     .foregroundColor(Color(hex: "4A4A4A"))
@@ -1295,6 +1231,7 @@ struct SplashView: View {
                     .opacity(showQuote ? 1 : 0)
 
                 ZStack {
+                    // Background halo glow
                     Circle()
                         .fill(
                             RadialGradient(
@@ -1312,6 +1249,40 @@ struct SplashView: View {
                         .blur(radius: 30)
                         .scaleEffect(bubbleScale)
 
+                    // Pulsing guide ring (before press) - beckons user to touch
+                    if !isLongPressing {
+                        Circle()
+                            .stroke(
+                                Color(hex: "FFD700").opacity(0.25),
+                                lineWidth: 1.5
+                            )
+                            .frame(width: 140, height: 140)
+                            .scaleEffect(guideRingScale)
+                            .opacity(guideRingOpacity)
+                    }
+
+                    // Progress arc (during press) - shows how long to hold
+                    if isLongPressing {
+                        Circle()
+                            .trim(from: 0, to: progressTrim)
+                            .stroke(
+                                AngularGradient(
+                                    colors: [
+                                        Color(hex: "FFD700").opacity(0.9),
+                                        Color(hex: "FFC107").opacity(0.7),
+                                        Color(hex: "FFD700").opacity(0.9)
+                                    ],
+                                    center: .center
+                                ),
+                                style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                            )
+                            .frame(width: 140, height: 140)
+                            .rotationEffect(.degrees(-90))
+                            .shadow(color: Color(hex: "FFD700").opacity(0.5), radius: 6)
+                            .scaleEffect(bubbleScale > 2 ? bubbleScale * 0.4 : 1.0)
+                    }
+
+                    // Main bubble
                     SoapBubbleView.splash(size: 220)
                         .scaleEffect(bubbleScale)
                 }
@@ -1333,10 +1304,11 @@ struct SplashView: View {
                     .padding(.horizontal, 40)
                 }
 
-                Text("长按进入")
-                    .font(.system(size: 14))
-                    .foregroundColor(Color(hex: "6B6B6B").opacity(0.5))
+                Text(L("触碰光球，开启微光"))
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(Color(hex: "CBA972").opacity(0.6))
                     .opacity(isLongPressing ? 0 : 1)
+                    .animation(.easeOut(duration: 0.3), value: isLongPressing)
                     .padding(.bottom, 60)
             }
             .blur(radius: showBurstEffect ? 20 : 0)
@@ -1348,16 +1320,46 @@ struct SplashView: View {
         }
     }
 
+    // MARK: - Guide Ring Pulse Animation
+    private func startGuideRingPulse() {
+        withAnimation(
+            .easeInOut(duration: 2.5)
+            .repeatForever(autoreverses: false)
+        ) {
+            guideRingScale = 1.6
+            guideRingOpacity = 0
+        }
+
+        // Reset and repeat with staggered timing for continuous wave effect
+        Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { _ in
+            guideRingScale = 1.0
+            guideRingOpacity = 0.6
+            withAnimation(
+                .easeInOut(duration: 2.5)
+            ) {
+                guideRingScale = 1.6
+                guideRingOpacity = 0
+            }
+        }
+    }
+
     private func startLongPress() {
         guard !isLongPressing else { return }
         isLongPressing = true
+        progressTrim = 0
         SoundManager.hapticLight()
 
-        withAnimation(.easeInOut(duration: 2.5)) {
+        // Animate bubble scale
+        withAnimation(.easeInOut(duration: pressDuration)) {
             bubbleScale = maxBubbleScale
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+        // Animate progress arc
+        withAnimation(.linear(duration: pressDuration)) {
+            progressTrim = 1.0
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + pressDuration) {
             if isLongPressing {
                 triggerBurst()
             }
@@ -1370,6 +1372,7 @@ struct SplashView: View {
         if bubbleScale < maxBubbleScale {
             withAnimation(.spring(response: 0.5, dampingFraction: 0.6)) {
                 bubbleScale = 1.0
+                progressTrim = 0
             }
             isLongPressing = false
         }
@@ -1502,6 +1505,11 @@ struct HomeView: View {
     @State private var isDraggingBubble = false  // Track when user is dragging a bubble
     @State private var showResetConfirmation = false
     @State private var showSettings = false
+    @State private var layoutScale: CGFloat = 1.0
+    @State private var showResetLoginConfirmation = false
+    @State private var showResetLoginSuccess = false
+    @State private var resetTapCount = 0
+    @State private var isResettingLogin = false
 
     // Task input state
     @State private var showTaskInput = false
@@ -1521,6 +1529,8 @@ struct HomeView: View {
     private var isViewingNonToday: Bool {
         appState.currentTemporalMode != .today && appState.isViewingDetailedDay
     }
+
+    private var chatScale: CGFloat { layoutScale }
 
     private var selectedDateString: String {
         let formatter = DateFormatter()
@@ -1542,12 +1552,29 @@ struct HomeView: View {
             ZStack {
                 // Background changes based on temporal mode
                 backgroundView
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        guard appState.currentTemporalMode == .today else { return }
+                        resetTapCount += 1
+                        if resetTapCount >= 5 {
+                            resetTapCount = 0
+                            showResetLoginConfirmation = true
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            resetTapCount = 0
+                        }
+                    }
 
                 VStack(spacing: 0) {
                     // Header with navigation
                     headerView
 
-                    BubbleSceneView(scene: bubbleScene)
+                    if appState.bubbles.isEmpty && appState.currentTemporalMode == .today && appState.currentGoalName == nil {
+                        // Empty state for new users (no goal)
+                        homeEmptyStateView
+                    } else {
+                        BubbleSceneView(scene: bubbleScene)
+                    }
 
                     Spacer()
                 }
@@ -1577,6 +1604,39 @@ struct HomeView: View {
                 // Read-only indicator for past dates
                 if isReadOnly {
                     readOnlyIndicator
+                }
+
+                // Floating "返回今天" button when viewing non-today date
+                if appState.currentTemporalMode != .today {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            Button(action: {
+                                appState.selectDate(Date())
+                                appState.isViewingDetailedDay = false
+                            }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.uturn.left")
+                                        .font(.system(size: 13, weight: .semibold))
+                                    Text(L("返回今天"))
+                                        .font(.system(size: 14, weight: .semibold))
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(
+                                    Capsule()
+                                        .fill(Color(hex: "CBA972"))
+                                        .shadow(color: Color(hex: "CBA972").opacity(0.3), radius: 8, y: 4)
+                                )
+                            }
+                            .padding(.trailing, 20)
+            .padding(.bottom, 100 * layoutScale)
+        }
+    }
+                    .zIndex(150)
+                    .transition(.scale.combined(with: .opacity))
                 }
             }
             .onAppear {
@@ -1643,6 +1703,34 @@ struct HomeView: View {
                     .environmentObject(SupabaseManager.shared)
                     .modelContext(modelContext)
             }
+            .confirmationDialog(
+                L("恢复初始登录"),
+                isPresented: $showResetLoginConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(L("确认"), role: .destructive) {
+                    resetToInitialLogin()
+                }
+                Button(L("取消"), role: .cancel) {}
+            } message: {
+                Text(L("将退出登录并清空本地数据，用于测试。"))
+            }
+            .alert(L("已恢复初始登录"), isPresented: $showResetLoginSuccess) {
+                Button(L("完成")) {}
+            }
+            .overlay {
+                if isResettingLogin {
+                    ZStack {
+                        Color.black.opacity(0.2).ignoresSafeArea()
+                        ProgressView(L("正在处理..."))
+                            .padding(20)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.white)
+                            )
+                    }
+                }
+            }
         }
     }
 
@@ -1691,6 +1779,45 @@ struct HomeView: View {
         }
     }
 
+    // MARK: - Home Empty State (No Goal)
+    private var homeEmptyStateView: some View {
+        VStack(spacing: 20) {
+            Spacer()
+
+            // Lumi avatar with breathing glow
+            ZStack {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color(hex: "FFD700").opacity(0.15),
+                                Color(hex: "FFB6C1").opacity(0.05),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 20,
+                            endRadius: 80
+                        )
+                    )
+                    .frame(width: 160, height: 160)
+
+                LumiMiniAvatar(isThinking: false, size: 64)
+            }
+
+            Text(L("还没有愿景光球呢"))
+                .font(.system(size: 18, weight: .medium, design: .rounded))
+                .foregroundColor(Color(hex: "4A4A4A"))
+
+            Text(L("点击 Lumi，开启你的第一段旅程"))
+                .font(.system(size: 14))
+                .foregroundColor(Color(hex: "6B6B6B").opacity(0.7))
+
+            Spacer()
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     // MARK: - Header View
     private var headerView: some View {
         HStack {
@@ -1704,7 +1831,7 @@ struct HomeView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 16, weight: .medium))
-                        Text("返回今天")
+                        Text(L("返回今天"))
                             .font(.system(size: 14, weight: .medium))
                     }
                     .foregroundColor(Color(hex: "6B6B6B"))
@@ -1736,21 +1863,21 @@ struct HomeView: View {
                         showResetConfirmation = true
                     }
                     .confirmationDialog(
-                        "重置所有数据",
+                        L("重置所有数据"),
                         isPresented: $showResetConfirmation,
                         titleVisibility: .visible
                     ) {
-                        Button("确定重置", role: .destructive) {
+                        Button(L("确定重置"), role: .destructive) {
                             appState.resetAllData(modelContext: modelContext)
                         }
-                        Button("取消", role: .cancel) {}
+                        Button(L("取消"), role: .cancel) {}
                     } message: {
-                        Text("确定要重置所有数据吗？这将清除所有对话、目标和光球记录，回到初始状态。此操作不可撤销。")
+                        Text(L("确定要重置所有数据吗？这将清除所有对话、目标和光球记录，回到初始状态。此操作不可撤销。"))
                     }
 
                     // Hint text for drag-to-tomorrow feature - only visible when dragging
                     if isDraggingBubble {
-                        Text("转为明日待办清单")
+                        Text(L("转为明日待办清单"))
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(Color(hex: "CBA972"))
                             .padding(.horizontal, 8)
@@ -1815,8 +1942,8 @@ struct HomeView: View {
                 }
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 20)
+        .padding(.horizontal, 20 * layoutScale)
+        .padding(.top, 20 * layoutScale)
     }
 
     private var temporalModeLabelColor: Color {
@@ -1824,6 +1951,22 @@ struct HomeView: View {
         case .past: return Color(hex: "8B7355")
         case .today: return Color(hex: "CBA972")
         case .future: return Color(hex: "87CEEB")
+        }
+    }
+
+    private func resetToInitialLogin() {
+        guard !isResettingLogin else { return }
+        isResettingLogin = true
+
+        Task {
+            appState.resetForFreshUser(modelContext: modelContext)
+            SubscriptionManager.shared.setForceFreeMode(true)
+            await SupabaseManager.shared.signOut()
+
+            await MainActor.run {
+                isResettingLogin = false
+                showResetLoginSuccess = true
+            }
         }
     }
 
@@ -1845,7 +1988,7 @@ struct HomeView: View {
                         )
                     )
                     .background(Circle().fill(.ultraThinMaterial))
-                    .frame(width: 70, height: 70)
+                    .frame(width: 70 * layoutScale, height: 70 * layoutScale)
                     .shadow(color: Color(hex: "CBA972").opacity(0.3), radius: 24, x: 0, y: 8)
                     .overlay(
                         Text("+")
@@ -1867,12 +2010,12 @@ struct HomeView: View {
                         }
                     }
 
-                Text("长按创建待办清单")
-                    .font(.system(size: 11))
+                Text(L("长按创建待办清单"))
+                    .font(.system(size: 11 * layoutScale))
                     .foregroundColor(Color(hex: "6B6B6B").opacity(0.6))
                     .opacity(isLongPressingLaunch ? 0 : 1)
             }
-            .padding(.bottom, 30)
+            .padding(.bottom, 30 * layoutScale)
         }
     }
 
@@ -1884,10 +2027,10 @@ struct HomeView: View {
                 Spacer()
 
                 Button(action: { appState.openChat() }) {
-                    LumiPetAvatar()
+                    LumiPetAvatar(size: 56 * chatScale)
                 }
-                .padding(.trailing, 24)
-                .padding(.bottom, 110)
+                .padding(.trailing, 24 * chatScale)
+                .padding(.bottom, 110 * chatScale)
             }
         }
     }
@@ -1914,14 +2057,14 @@ struct HomeView: View {
             HStack {
                 Image(systemName: "lock.fill")
                     .font(.system(size: 12))
-                Text("只读模式 - 过去的光球已凝结")
+                Text(L("只读模式 - 过去的光球已凝结"))
                     .font(.system(size: 12))
             }
             .foregroundColor(Color(hex: "8B7355").opacity(0.7))
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .background(Capsule().fill(Color.white.opacity(0.8)))
-            .padding(.bottom, 30)
+            .padding(.bottom, 30 * layoutScale)
         }
     }
 
@@ -1941,7 +2084,7 @@ struct HomeView: View {
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(Color(hex: "6B6B6B"))
 
-                TextField("写下你的任务...", text: $taskInputText)
+                TextField(L("写下你的任务..."), text: $taskInputText)
                     .focused($isTaskInputFocused)
                     .font(.system(size: 16))
                     .padding(16)
@@ -1961,7 +2104,7 @@ struct HomeView: View {
                     Button(action: {
                         dismissTaskInput()
                     }) {
-                        Text("取消")
+                        Text(L("取消"))
                             .font(.system(size: 16, weight: .medium))
                             .foregroundColor(Color(hex: "6B6B6B"))
                             .frame(maxWidth: .infinity)
@@ -1975,7 +2118,7 @@ struct HomeView: View {
                     Button(action: {
                         createTaskBubble()
                     }) {
-                        Text("创建")
+                        Text(L("创建"))
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
@@ -2010,15 +2153,16 @@ struct HomeView: View {
 
     // MARK: - Scene Setup
     private func setupScene(geometry: GeometryProxy) {
+        layoutScale = min(max(geometry.size.width / 390, 1.0), 1.4)
         bubbleScene.size = geometry.size
         bubbleScene.archivePosition = CGPoint(
-            x: geometry.size.width - 55,
-            y: geometry.size.height - 140
+            x: geometry.size.width - 55 * layoutScale,
+            y: geometry.size.height - 140 * layoutScale
         )
 
         bubbleScene.calendarPosition = CGPoint(
-            x: 30,
-            y: geometry.size.height - 50
+            x: 30 * layoutScale,
+            y: geometry.size.height - 50 * layoutScale
         )
 
         // Set read-only mode based on temporal state
@@ -2948,19 +3092,17 @@ class BubbleNode: SKNode {
         self.physicsBody?.isDynamic = true
         self.physicsBody?.mass = bubbleType == .core ? 1.5 : 0.8
         self.physicsBody?.friction = 0.0
-        self.physicsBody?.restitution = 0.6
-        self.physicsBody?.linearDamping = 5.0  // Increased from 4.0 for 50% slower movement
+        self.physicsBody?.restitution = 1.0
+        self.physicsBody?.linearDamping = 0.0
         self.physicsBody?.angularDamping = 0.8
         self.physicsBody?.allowsRotation = false
         self.physicsBody?.categoryBitMask = 1
         self.physicsBody?.contactTestBitMask = 1
         self.physicsBody?.collisionBitMask = 1
 
-        // 50% slower initial velocity (reduced from -8...8 to -4...4)
-        self.physicsBody?.velocity = CGVector(
-            dx: CGFloat.random(in: -4...4),
-            dy: CGFloat.random(in: -4...4)
-        )
+        let speed: CGFloat = 18
+        let angle = CGFloat.random(in: 0...(2 * .pi))
+        self.physicsBody?.velocity = CGVector(dx: cos(angle) * speed, dy: sin(angle) * speed)
     }
 
     private func addTextLabel(radius: CGFloat) {
@@ -3024,6 +3166,8 @@ class BubbleScene: SKScene {
     private var longPressDetected: Bool = false
     private var dragStartPosition: CGPoint = .zero
     private var dragStartTime: TimeInterval = 0
+    private let targetSpeed: CGFloat = 18
+    private let boundaryInset: CGFloat = 86
 
     override init(size: CGSize) {
         super.init(size: size)
@@ -3038,68 +3182,18 @@ class BubbleScene: SKScene {
     }
 
     private func setupPhysicsWorld() {
-        physicsWorld.gravity = CGVector(dx: 0, dy: -0.05)  // Reduced by 50% for slower movement
-        physicsWorld.speed = 0.75  // Reduce overall physics speed by 25%
+        physicsWorld.gravity = .zero
+        physicsWorld.speed = 1.0
     }
 
     private func setupFloatingFields() {
-        // Reduce field strengths by 50% for slower movement
-        let noiseField = SKFieldNode.noiseField(withSmoothness: 1.0, animationSpeed: 0.15)
-        noiseField.strength = 0.075  // Reduced by 50% from 0.15
-        noiseField.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        noiseField.region = SKRegion(size: CGSize(width: size.width * 2, height: size.height * 2))
-        addChild(noiseField)
-
-        let turbulenceField = SKFieldNode.turbulenceField(withSmoothness: 0.8, animationSpeed: 0.25)
-        turbulenceField.strength = 0.04  // Reduced by 50% from 0.08
-        turbulenceField.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        turbulenceField.region = SKRegion(size: CGSize(width: size.width * 2, height: size.height * 2))
-        addChild(turbulenceField)
-
         // Screen edge as container - strict boundary with small inset for bubble radius
         let boundaryRect = CGRect(x: 0, y: 0, width: size.width, height: size.height)
-        let insetBounds = boundaryRect.insetBy(dx: 20, dy: 20)  // Minimal inset to account for bubble size
+        let insetBounds = boundaryRect.insetBy(dx: boundaryInset, dy: boundaryInset)
         let boundary = SKPhysicsBody(edgeLoopFrom: insetBounds)
         boundary.friction = 0.0
-        boundary.restitution = 0.6  // Slightly bouncy for natural container feel
+        boundary.restitution = 1.0
         physicsBody = boundary
-
-        // Add edge repulsion forces to keep bubbles comfortably within screen bounds
-        addEdgeRepulsionFields()
-    }
-
-    private func addEdgeRepulsionFields() {
-        // Create stronger repulsion fields to keep bubbles within screen container
-        let edgeStrength: Float = 3.5  // Increased strength for better containment
-        let edgeWidth: CGFloat = 100  // Slightly wider field
-
-        // Left edge
-        let leftField = SKFieldNode.radialGravityField()
-        leftField.strength = -edgeStrength
-        leftField.position = CGPoint(x: edgeWidth / 2, y: size.height / 2)
-        leftField.region = SKRegion(size: CGSize(width: edgeWidth, height: size.height))
-        addChild(leftField)
-
-        // Right edge
-        let rightField = SKFieldNode.radialGravityField()
-        rightField.strength = -edgeStrength
-        rightField.position = CGPoint(x: size.width - edgeWidth / 2, y: size.height / 2)
-        rightField.region = SKRegion(size: CGSize(width: edgeWidth, height: size.height))
-        addChild(rightField)
-
-        // Top edge
-        let topField = SKFieldNode.radialGravityField()
-        topField.strength = -edgeStrength
-        topField.position = CGPoint(x: size.width / 2, y: size.height - edgeWidth / 2)
-        topField.region = SKRegion(size: CGSize(width: size.width, height: edgeWidth))
-        addChild(topField)
-
-        // Bottom edge
-        let bottomField = SKFieldNode.radialGravityField()
-        bottomField.strength = -edgeStrength
-        bottomField.position = CGPoint(x: size.width / 2, y: edgeWidth / 2)
-        bottomField.region = SKRegion(size: CGSize(width: size.width, height: edgeWidth))
-        addChild(bottomField)
     }
 
     func addBubble(bubble: Bubble, at position: CGPoint? = nil, isStatic: Bool = false) {
@@ -3121,10 +3215,7 @@ class BubbleScene: SKScene {
         bubbleNodes[bubble.id] = bubbleNode
         addChild(bubbleNode)
 
-        // Only add repulsion field for dynamic bubbles
-        if !isStatic && !isReadOnly {
-            addRepulsionField(to: bubbleNode, radius: radius)
-        }
+        // Keep motion uniform and rely on boundary + collisions
     }
 
     func clearAllBubbles() {
@@ -3165,13 +3256,45 @@ class BubbleScene: SKScene {
         bubbleNodes.removeValue(forKey: id)
     }
 
-    private func addRepulsionField(to bubbleNode: BubbleNode, radius: CGFloat) {
-        let repulsionField = SKFieldNode.radialGravityField()
-        repulsionField.strength = -1.5
-        repulsionField.falloff = 2.0
-        repulsionField.region = SKRegion(radius: Float(radius * 2.0))
-        repulsionField.minimumRadius = Float(radius * 1.2)
-        bubbleNode.addChild(repulsionField)
+    override func update(_ currentTime: TimeInterval) {
+        let bounds = CGRect(x: 0, y: 0, width: size.width, height: size.height)
+            .insetBy(dx: boundaryInset, dy: boundaryInset)
+
+        for node in bubbleNodes.values {
+            guard !node.isFrozen else { continue }
+            guard let body = node.physicsBody else { continue }
+
+            var position = node.position
+            var velocity = body.velocity
+
+            if position.x <= bounds.minX {
+                position.x = bounds.minX
+                velocity.dx = abs(velocity.dx)
+            } else if position.x >= bounds.maxX {
+                position.x = bounds.maxX
+                velocity.dx = -abs(velocity.dx)
+            }
+
+            if position.y <= bounds.minY {
+                position.y = bounds.minY
+                velocity.dy = abs(velocity.dy)
+            } else if position.y >= bounds.maxY {
+                position.y = bounds.maxY
+                velocity.dy = -abs(velocity.dy)
+            }
+
+            let speed = hypot(velocity.dx, velocity.dy)
+            if speed < 0.1 {
+                let angle = CGFloat.random(in: 0...(2 * .pi))
+                velocity = CGVector(dx: cos(angle) * targetSpeed, dy: sin(angle) * targetSpeed)
+            } else {
+                let scale = targetSpeed / speed
+                velocity = CGVector(dx: velocity.dx * scale, dy: velocity.dy * scale)
+            }
+
+            node.position = position
+            body.velocity = velocity
+        }
     }
 
     private func createDreamyFlowParticles(from startPos: CGPoint, color: UIColor) {
@@ -3478,7 +3601,7 @@ struct ChatView: View {
             Spacer()
 
             // Title
-            Text("Lumi")
+            Text(L("微光计划"))
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundColor(Color(hex: "5C5C5C"))
 
@@ -3905,10 +4028,29 @@ struct ChatView: View {
         return JSONParser.containsJSON(content)
     }
 
-    /// Send confirmation message
+    /// Handle contract confirmation - goal is already created by ChatService,
+    /// so we just add a local confirmation message and transition to companion phase.
     private func sendConfirmation() {
-        inputText = L("确认")
-        sendMessage()
+        // Add user's "确认" message locally
+        let userMsg = ChatMessage(content: L("确认"), isUser: true)
+        modelContext.insert(userMsg)
+
+        // Add AI acknowledgment locally (no API call needed)
+        let ackText = L("契约已生效，愿景光球已注入你的日历。现在，去点亮你的第一束微光吧。")
+        let aiMsg = ChatMessage(content: ackText, isUser: false)
+        modelContext.insert(aiMsg)
+        try? modelContext.save()
+
+        // Ensure we're in companion phase
+        if appState.currentPhase == .onboarding {
+            appState.currentPhase = .companion
+        }
+
+        // Reload chat messages to show the new local messages
+        appState.reloadChatMessages(from: modelContext)
+
+        // Post notification to refresh HomeView
+        NotificationCenter.default.post(name: .goalDataDidChange, object: nil)
     }
 
     /// Auto-request graduation letter (hidden from user)
@@ -4193,12 +4335,15 @@ struct SmilePath: Shape {
 
 // MARK: - Lumi Pet Avatar (Home Button - Larger Animated Avatar)
 struct LumiPetAvatar: View {
+    let size: CGFloat
     @State private var breatheScale: CGFloat = 1.0
     @State private var blinkAnimation = false
     @State private var floatOffset: CGFloat = 0
+    @State private var smileLift: CGFloat = 0
 
-    private let size: CGFloat = 56
-
+    init(size: CGFloat = 56) {
+        self.size = size
+    }
     var body: some View {
         ZStack {
             // Outer breathing glow
@@ -4206,68 +4351,57 @@ struct LumiPetAvatar: View {
                 .fill(
                     RadialGradient(
                         colors: [
-                            Color(hex: "FFD700").opacity(0.4),
-                            Color(hex: "CBA972").opacity(0.25),
+                            Color(hex: "FFD700").opacity(0.45),
+                            Color(hex: "FFB6C1").opacity(0.3),
                             Color.clear
                         ],
                         center: .center,
                         startRadius: 0,
-                        endRadius: size * 0.7
+                        endRadius: size * 0.9
                     )
                 )
-                .frame(width: size * 1.5, height: size * 1.5)
+                .frame(width: size * 1.8, height: size * 1.8)
                 .scaleEffect(breatheScale)
 
-            // Main bubble body with subtle iridescence
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [
-                            .white.opacity(0.95),
-                            Color(hex: "ADD8E6").opacity(0.55),
-                            Color(hex: "CBA972").opacity(0.4)
-                        ],
-                        center: .center,
-                        startRadius: 0,
-                        endRadius: size * 0.5
-                    )
-                )
+            // Core bubble look (same as primary bubble style)
+            SoapBubbleView.splash(size: size)
                 .frame(width: size, height: size)
                 .scaleEffect(breatheScale)
                 .shadow(color: Color(hex: "FFD700").opacity(0.5), radius: 12, x: 0, y: 4)
-                .shadow(color: Color(hex: "CBA972").opacity(0.3), radius: 20, x: 0, y: 6)
-
-            // Highlight shine
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.6), Color.clear],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(width: size * 0.8, height: size * 0.8)
-                .offset(x: -size * 0.1, y: -size * 0.1)
-                .blur(radius: 4)
+                .shadow(color: Color(hex: "CBA972").opacity(0.35), radius: 18, x: 0, y: 6)
 
             // Face - Eyes
-            HStack(spacing: size * 0.22) {
+            HStack(spacing: size * 0.24) {
                 PetEyeView(isBlinking: blinkAnimation, size: size)
                 PetEyeView(isBlinking: blinkAnimation, size: size)
             }
             .offset(y: -size * 0.03)
 
+            // Soft blush cheeks
+            HStack(spacing: size * 0.42) {
+                Circle()
+                    .fill(Color(hex: "FFB6C1").opacity(0.55))
+                    .frame(width: size * 0.16, height: size * 0.11)
+                    .blur(radius: 3)
+                Circle()
+                    .fill(Color(hex: "FFB6C1").opacity(0.55))
+                    .frame(width: size * 0.16, height: size * 0.11)
+                    .blur(radius: 3)
+            }
+            .offset(y: size * 0.08)
+
             // Happy smile - centered
-            SmilePath(width: size * 0.28, curveHeight: size * 0.1)
-                .stroke(Color(hex: "CBA972").opacity(0.7), style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                .frame(width: size * 0.28, height: size * 0.12)
-            .offset(y: size * 0.18)
+            SmilePath(width: size * 0.32, curveHeight: size * 0.14)
+                .stroke(Color(hex: "CBA972").opacity(0.8), style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+                .frame(width: size * 0.32, height: size * 0.14)
+                .offset(y: size * 0.19 - smileLift)
         }
         .offset(y: floatOffset)
         .onAppear {
             startBreathing()
             startBlinking()
             startFloating()
+            startSmileWiggle()
         }
     }
 
@@ -4296,6 +4430,12 @@ struct LumiPetAvatar: View {
             }
         }
     }
+
+    private func startSmileWiggle() {
+        withAnimation(.easeInOut(duration: 3.6).repeatForever(autoreverses: true)) {
+            smileLift = 0.6
+        }
+    }
 }
 
 // MARK: - Pet Eye View (for Home Button Avatar)
@@ -4303,9 +4443,9 @@ struct PetEyeView: View {
     let isBlinking: Bool
     let size: CGFloat
 
-    private var eyeWidth: CGFloat { size * 0.13 }
-    private var eyeHeight: CGFloat { size * 0.18 }
-    private var pupilSize: CGFloat { size * 0.09 }
+    private var eyeWidth: CGFloat { size * 0.16 }
+    private var eyeHeight: CGFloat { size * 0.22 }
+    private var pupilSize: CGFloat { size * 0.11 }
 
     var body: some View {
         ZStack {
@@ -4317,22 +4457,28 @@ struct PetEyeView: View {
 
             // Pupil
             if !isBlinking {
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [Color(hex: "4682B4"), Color(hex: "1E3A5F")],
-                            center: .center,
-                            startRadius: 0,
-                            endRadius: pupilSize
+                ZStack {
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [Color(hex: "6FA8FF"), Color(hex: "1E3A5F")],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: pupilSize
+                            )
                         )
-                    )
-                    .frame(width: pupilSize, height: pupilSize)
+                        .frame(width: pupilSize, height: pupilSize)
+                    Circle()
+                        .fill(Color.white.opacity(0.8))
+                        .frame(width: pupilSize * 0.25, height: pupilSize * 0.25)
+                        .offset(x: -pupilSize * 0.15, y: -pupilSize * 0.18)
+                }
 
                 // Sparkle highlight
                 Circle()
                     .fill(Color.white.opacity(0.9))
-                    .frame(width: pupilSize * 0.4, height: pupilSize * 0.4)
-                    .offset(x: -pupilSize * 0.2, y: -pupilSize * 0.2)
+                    .frame(width: pupilSize * 0.45, height: pupilSize * 0.45)
+                    .offset(x: -pupilSize * 0.22, y: -pupilSize * 0.22)
             }
         }
         .animation(.easeInOut(duration: 0.12), value: isBlinking)
@@ -4601,6 +4747,9 @@ struct CalendarView: View {
     @State private var selectedDayForTransition: CalendarDay?
 
     private let calendar = Calendar.current
+    private var layoutScale: CGFloat {
+        min(max(UIScreen.main.bounds.width / 390, 1.0), 1.4)
+    }
 
     var body: some View {
         ZStack {
@@ -4670,13 +4819,13 @@ struct CalendarView: View {
 
                 // Bottom Quote with Typewriter Effect
                 CalendarQuoteView()
-                    .padding(.bottom, 16)
+                    .padding(.bottom, 8)
 
                 // Back button hint
                 HStack {
                     Image(systemName: "chevron.down")
                         .foregroundColor(Color.white.opacity(0.4))
-                    Text("下滑返回今天")
+                    Text(L("下滑返回今天"))
                         .font(.system(size: 13))
                         .foregroundColor(Color.white.opacity(0.4))
                 }
@@ -4694,10 +4843,10 @@ struct CalendarView: View {
                             appState.openChat()
                         }
                     }) {
-                        LumiPetAvatar()
+                        LumiPetAvatar(size: 56 * layoutScale)
                     }
-                    .padding(.trailing, 24)
-                    .padding(.bottom, 110)
+                    .padding(.trailing, 24 * layoutScale)
+                    .padding(.bottom, 110 * layoutScale)
                 }
             }
         }
@@ -5113,7 +5262,7 @@ struct CalendarQuoteView: View {
 
     var body: some View {
         Text(displayedText)
-            .font(.system(size: 15, weight: .regular))
+            .font(.system(size: 18, weight: .medium))
             .foregroundColor(Color(hex: "CBA972").opacity(0.8))
             .multilineTextAlignment(.center)
             .onAppear {
@@ -5127,7 +5276,7 @@ struct CalendarQuoteView: View {
         displayedText = ""
 
         for (index, character) in quote.enumerated() {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.12) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.16) {
                 displayedText.append(character)
             }
         }
@@ -5192,52 +5341,6 @@ struct ArchiveView: View {
     @State private var showOverlay = false
     @State private var archivedGoals: [ArchivedGoal] = []
 
-    // Fallback: 示例完成目标（如果没有真实数据）
-    private let sampleGoals: [CompletedGoal] = [
-        CompletedGoal(
-            title: L("完成第一本小说"),
-            aiWitnessText: L("日复一日的书写中，碎片化的想法逐渐凝聚成完整的故事。"),
-            season: L("2024 春"),
-            position: CGPoint(x: 0.5, y: 0.0),
-            color: Color(hex: "FFD700")
-        ),
-        CompletedGoal(
-            title: L("30天冥想之旅"),
-            aiWitnessText: L("每个清晨的呼吸，都成为了稳定心绪的锚点，平息着思绪的波澜。"),
-            season: L("2025 冬"),
-            position: CGPoint(x: 0.5, y: 0.2),
-            color: Color(hex: "87CEEB")
-        ),
-        CompletedGoal(
-            title: L("学会钢琴基础"),
-            aiWitnessText: L("手指在琴键上找到了自己的声音，将寂静转化为旋律。"),
-            season: L("2024 秋"),
-            position: CGPoint(x: 0.5, y: 0.4),
-            color: Color(hex: "DDA0DD")
-        ),
-        CompletedGoal(
-            title: L("阅读50本书"),
-            aiWitnessText: L("一个个世界如同石块般堆叠，搭建起通往理解的桥梁。"),
-            season: L("2025 夏"),
-            position: CGPoint(x: 0.5, y: 0.6),
-            color: Color(hex: "CBA972")
-        ),
-        CompletedGoal(
-            title: L("晨间仪式"),
-            aiWitnessText: L("黎明又黎明，微小的仪式编织出蜕变人生的织锦。"),
-            season: L("2025 春"),
-            position: CGPoint(x: 0.5, y: 0.8),
-            color: Color(hex: "FFB6C1")
-        ),
-        CompletedGoal(
-            title: L("健康饮食挑战"),
-            aiWitnessText: L("每一餐的选择，都是对自己身体的温柔对话。"),
-            season: L("2024 夏"),
-            position: CGPoint(x: 0.5, y: 1.0),
-            color: Color(hex: "98D8C8")
-        )
-    ]
-
     // Horizontal scatter offsets for irregular layout
     private let scatterOffsets: [CGFloat] = [-80, 60, -40, 70, -60, 50]
 
@@ -5264,8 +5367,7 @@ struct ArchiveView: View {
             )
         }
 
-        // If no archived goals, show sample goals
-        return converted.isEmpty ? sampleGoals : converted
+        return converted
     }
 
     var body: some View {
@@ -5292,29 +5394,71 @@ struct ArchiveView: View {
             // LAYER 3: Ambient Stars (Bigger - Radius 2.0-3.0)
             AmbientStarsBackground()
 
-            // LAYER 4: Scrollable List with Irregular Scatter + Enhanced Flashlight Effect
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 140) {
-                    ForEach(Array(completedGoals.enumerated()), id: \.element.id) { index, goal in
-                        EnhancedFlashlightLightOrb(
-                            goal: goal,
-                            xOffset: scatterOffsets[index % scatterOffsets.count]
-                        )
-                        .onTapGesture {
-                            // Free users cannot read archive details
-                            if !appState.isPro {
-                                appState.openPaywall(.archiveLocked)
-                                return
+            // LAYER 4: Content - either empty state or scrollable list
+            if completedGoals.isEmpty {
+                // Empty state for new users
+                VStack(spacing: 20) {
+                    Spacer()
+
+                    // Ghost orb - faint hint of future stardust
+                    ZStack {
+                        Circle()
+                            .fill(
+                                RadialGradient(
+                                    colors: [
+                                        Color.white.opacity(0.08),
+                                        Color(hex: "FFD700").opacity(0.03),
+                                        Color.clear
+                                    ],
+                                    center: .center,
+                                    startRadius: 10,
+                                    endRadius: 60
+                                )
+                            )
+                            .frame(width: 120, height: 120)
+
+                        Circle()
+                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                            .frame(width: 50, height: 50)
+                    }
+
+                    Text(L("这里会收藏你完成的每一段旅程"))
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.white.opacity(0.6))
+                        .multilineTextAlignment(.center)
+
+                    Text(L("走完第一个愿景，你的第一颗光尘就会在这里亮起"))
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.35))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+
+                    Spacer()
+                }
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 140) {
+                        ForEach(Array(completedGoals.enumerated()), id: \.element.id) { index, goal in
+                            EnhancedFlashlightLightOrb(
+                                goal: goal,
+                                xOffset: scatterOffsets[index % scatterOffsets.count]
+                            )
+                            .onTapGesture {
+                                // Free users cannot read archive details
+                                if !appState.isPro {
+                                    appState.openPaywall(.archiveLocked)
+                                    return
+                                }
+                                withAnimation(.easeOut(duration: 0.3)) {
+                                    selectedGoal = goal
+                                    showOverlay = true
+                                }
+                                SoundManager.hapticLight()
                             }
-                            withAnimation(.easeOut(duration: 0.3)) {
-                                selectedGoal = goal
-                                showOverlay = true
-                            }
-                            SoundManager.hapticLight()
                         }
                     }
+                    .padding(.vertical, 250)
                 }
-                .padding(.vertical, 250)  // Add padding so items can scroll to center
             }
 
             // LAYER 5: Navigation header (Fixed)
@@ -5339,7 +5483,7 @@ struct ArchiveView: View {
 
                     Spacer()
 
-                    Text("光尘")
+                    Text(L("光尘"))
                         .font(.custom("New York", size: 26))
                         .kerning(2)
                         .foregroundColor(Color(hex: "CBA972"))
@@ -5417,6 +5561,7 @@ struct SettingsView: View {
     @State private var isDeleting = false
     @State private var showDeleteSuccess = false
     @State private var activeLegalPage: LegalPage?
+    @State private var showOnboardingGuide = false
 
     var body: some View {
         NavigationStack {
@@ -5458,6 +5603,12 @@ struct SettingsView: View {
                 }
 
                 Section(header: Text(L("信息与支持"))) {
+                    Button {
+                        showOnboardingGuide = true
+                    } label: {
+                        Label(L("使用指引"), systemImage: "book.closed")
+                    }
+
                     Button {
                         activeLegalPage = .privacy
                     } label: {
@@ -5514,6 +5665,9 @@ struct SettingsView: View {
             .sheet(item: $activeLegalPage) { page in
                 LegalPageContainer(page: page)
             }
+            .fullScreenCover(isPresented: $showOnboardingGuide) {
+                OnboardingGuideView(isFromSettings: true)
+            }
             .overlay {
                 if isDeleting {
                     ZStack {
@@ -5548,6 +5702,7 @@ struct SettingsView: View {
             }
         }
     }
+
 }
 
 // MARK: - Visible Backlight Fog Component (Alpha 0.15 - Acts as Backlight)
@@ -5831,7 +5986,7 @@ struct TaskDetailOverlay: View {
                     .padding(.horizontal, 24)
 
                 // Dismiss hint
-                Text("轻触背景关闭")
+                Text(L("轻触背景关闭"))
                     .font(.system(size: 13))
                     .foregroundColor(Color(hex: "8B8B8B"))
                     .padding(.top, 8)
@@ -5939,7 +6094,7 @@ struct DraftPreviewCard: View {
                     .font(.system(size: 24))
                     .foregroundColor(Color(hex: "FFD700"))
 
-                Text("愿景契约草案")
+                Text(L("愿景契约草案"))
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(Color(hex: "FFD700"))
 
@@ -5958,7 +6113,7 @@ struct DraftPreviewCard: View {
                 .lineSpacing(6)
 
             // Footer hint
-            Text("请确认后继续")
+            Text(L("请确认后继续"))
                 .font(.system(size: 13))
                 .foregroundColor(Color(hex: "8B8B8B"))
                 .padding(.top, 8)
@@ -6007,11 +6162,11 @@ struct ContractStatusCard: View {
 
             // Status text
             VStack(spacing: 8) {
-                Text("契约已生效")
+                Text(L("契约已生效"))
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(Color(hex: "3C3C3C"))
 
-                Text("愿景正在生成...")
+                Text(L("愿景正在生成..."))
                     .font(.system(size: 15))
                     .foregroundColor(Color(hex: "8B8B8B"))
             }
@@ -6056,7 +6211,7 @@ struct ContractErrorCard: View {
 
             // Error text
             VStack(spacing: 8) {
-                Text("契约解析失败")
+                Text(L("契约解析失败"))
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(Color(hex: "3C3C3C"))
 
@@ -6069,7 +6224,7 @@ struct ContractErrorCard: View {
 
             // Retry button
             Button(action: onRetry) {
-                Text("重新生成")
+                Text(L("重新生成"))
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.white)
                     .padding(.horizontal, 24)
@@ -6119,7 +6274,7 @@ struct ContractCard: View {
                     .foregroundColor(Color(hex: "FFD700"))
                     .font(.system(size: 20))
 
-                Text("愿景契约草案")
+                Text(L("愿景契约草案"))
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(Color(hex: "FFD700"))
 
@@ -6128,7 +6283,7 @@ struct ContractCard: View {
 
             // Goal Title
             VStack(alignment: .leading, spacing: 6) {
-                Text("目标")
+                Text(L("目标"))
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(Color(hex: "8B8B8B"))
 
@@ -6144,7 +6299,7 @@ struct ContractCard: View {
 
             // Phases
             VStack(alignment: .leading, spacing: 12) {
-                Text("阶段计划")
+                Text(L("阶段计划"))
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(Color(hex: "8B8B8B"))
 
@@ -6165,7 +6320,7 @@ struct ContractCard: View {
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundColor(Color(hex: "3C3C3C"))
 
-                            Text("\(phase.durationDays)天 · \(phase.dailyTaskLabel)")
+                            Text(String(format: L("%d天 · %@"), phase.durationDays, phase.dailyTaskLabel))
                                 .font(.system(size: 13))
                                 .foregroundColor(Color(hex: "8B8B8B"))
                         }
@@ -6179,7 +6334,7 @@ struct ContractCard: View {
             Button(action: onConfirm) {
                 HStack {
                     Image(systemName: "checkmark.circle.fill")
-                    Text("确认启动")
+                    Text(L("确认启动"))
                         .font(.system(size: 16, weight: .semibold))
                 }
                 .foregroundColor(.white)
@@ -6295,11 +6450,11 @@ struct LetterEnvelopeOverlay: View {
 
                 // Label
                 VStack(spacing: 8) {
-                    Text("微光为你寄来了一封信")
+                    Text(L("微光为你寄来了一封信"))
                         .font(.system(size: 22, weight: .semibold))
                         .foregroundColor(.white)
 
-                    Text("轻触查看")
+                    Text(L("轻触查看"))
                         .font(.system(size: 16))
                         .foregroundColor(.white.opacity(0.7))
                 }
@@ -6356,7 +6511,7 @@ struct LetterView: View {
                         .scaleEffect(1.5)
                         .tint(Color(hex: "CBA972"))
 
-                    Text("正在生成你的信...")
+                    Text(L("正在生成你的信..."))
                         .font(.system(size: 16, weight: .medium))
                         .foregroundColor(Color(hex: "CBA972"))
                 }
@@ -6415,7 +6570,7 @@ struct LetterView: View {
                 .frame(maxHeight: 400)
 
                 // Tap hint
-                Text("轻触任意处继续")
+                Text(L("轻触任意处继续"))
                     .font(.system(size: 14, weight: .light))
                     .foregroundColor(Color(hex: "8B8B8B"))
                     .padding(.top, 30)
@@ -6480,7 +6635,7 @@ struct LetterView: View {
 
             // Add transition message to chat
             let transitionMessage = ChatMessage(
-                content: "（信已收好）\n\n休息得怎么样？当你准备好开始下一段旅程时，随时告诉我。",
+                content: L("（信已收好）\n\n休息得怎么样？当你准备好开始下一段旅程时，随时告诉我。"),
                 isUser: false
             )
             modelContext.insert(transitionMessage)
@@ -6599,6 +6754,465 @@ struct ConfettiPiece: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - ========== 新用户使用指引 ==========
+
+struct OnboardingGuideView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var currentPage = 0
+    let isFromSettings: Bool
+
+    init(isFromSettings: Bool = false) {
+        self.isFromSettings = isFromSettings
+    }
+
+    private let totalPages = 5
+
+    var body: some View {
+        ZStack {
+            // Background - warm cream gradient matching app style
+            LinearGradient(
+                colors: [Color(hex: "FFF9E6"), Color(hex: "FDFCF8")],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            // Subtle breathing glow
+            RadialGradient(
+                colors: [
+                    Color(hex: "FFD700").opacity(0.08),
+                    Color(hex: "FFB6C1").opacity(0.04),
+                    Color.clear
+                ],
+                center: .center,
+                startRadius: 0,
+                endRadius: 300
+            )
+            .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // Skip / Close button (top-right)
+                HStack {
+                    Spacer()
+                    if isFromSettings {
+                        Button(L("完成")) {
+                            dismiss()
+                        }
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(Color(hex: "6B6B6B"))
+                    } else if currentPage < totalPages - 1 {
+                        Button(L("跳过")) {
+                            completeOnboarding()
+                        }
+                        .font(.system(size: 15))
+                        .foregroundColor(Color(hex: "6B6B6B").opacity(0.6))
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 12)
+                .frame(height: 44)
+
+                // Page content
+                TabView(selection: $currentPage) {
+                    guidePage1.tag(0)
+                    guidePage2.tag(1)
+                    guidePage3.tag(2)
+                    guidePage4.tag(3)
+                    guidePage5.tag(4)
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .animation(.easeInOut(duration: 0.3), value: currentPage)
+
+                // Custom page indicator
+                HStack(spacing: 8) {
+                    ForEach(0..<totalPages, id: \.self) { index in
+                        Circle()
+                            .fill(index == currentPage
+                                  ? Color(hex: "CBA972")
+                                  : Color(hex: "CBA972").opacity(0.25))
+                            .frame(width: index == currentPage ? 8 : 6,
+                                   height: index == currentPage ? 8 : 6)
+                            .animation(.easeOut(duration: 0.2), value: currentPage)
+                    }
+                }
+                .padding(.bottom, 40)
+            }
+        }
+    }
+
+    // MARK: - Page 1: 理念 · 微光是什么
+    private var guidePage1: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            // Icon area - glowing bubble
+            ZStack {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color(hex: "FFD700").opacity(0.3),
+                                Color(hex: "FFD700").opacity(0.1),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 20,
+                            endRadius: 80
+                        )
+                    )
+                    .frame(width: 160, height: 160)
+
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color.white.opacity(0.9),
+                                Color(hex: "FFD700").opacity(0.3),
+                                Color(hex: "FFB6C1").opacity(0.2)
+                            ],
+                            center: UnitPoint(x: 0.35, y: 0.35),
+                            startRadius: 5,
+                            endRadius: 40
+                        )
+                    )
+                    .frame(width: 70, height: 70)
+                    .shadow(color: Color(hex: "FFD700").opacity(0.4), radius: 20)
+            }
+            .padding(.bottom, 48)
+
+            // Text content
+            guideTextBlock(
+                title: L("每个愿望，都值得被点亮"),
+                body: L("onboarding_page1_body")
+            )
+
+            Spacer()
+            Spacer()
+        }
+        .padding(.horizontal, 32)
+    }
+
+    // MARK: - Page 2: 核心 · 找到你的愿景
+    private var guidePage2: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            // Icon area - Lumi avatar with chat bubble
+            ZStack {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color(hex: "CBA972").opacity(0.15),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 20,
+                            endRadius: 80
+                        )
+                    )
+                    .frame(width: 160, height: 160)
+
+                VStack(spacing: 8) {
+                    // Chat bubble
+                    Image(systemName: "bubble.left.fill")
+                        .font(.system(size: 28))
+                        .foregroundColor(Color(hex: "CBA972").opacity(0.6))
+                        .offset(x: 20, y: -5)
+
+                    // Lumi face
+                    ZStack {
+                        Circle()
+                            .fill(
+                                RadialGradient(
+                                    colors: [Color.white, Color(hex: "FFF3D0")],
+                                    center: UnitPoint(x: 0.4, y: 0.35),
+                                    startRadius: 5,
+                                    endRadius: 30
+                                )
+                            )
+                            .frame(width: 60, height: 60)
+                            .shadow(color: Color(hex: "FFD700").opacity(0.3), radius: 15)
+
+                        // Eyes
+                        HStack(spacing: 12) {
+                            Circle().fill(Color(hex: "4A4A4A")).frame(width: 5, height: 5)
+                            Circle().fill(Color(hex: "4A4A4A")).frame(width: 5, height: 5)
+                        }
+                        .offset(y: -3)
+
+                        // Smile
+                        Path { path in
+                            path.addArc(center: CGPoint(x: 30, y: 35),
+                                       radius: 6, startAngle: .degrees(0),
+                                       endAngle: .degrees(180), clockwise: false)
+                        }
+                        .stroke(Color(hex: "4A4A4A"), lineWidth: 1.5)
+                        .frame(width: 60, height: 60)
+                    }
+                }
+            }
+            .padding(.bottom, 36)
+
+            guideTextBlock(
+                title: L("和 Lumi 聊聊，开启你的第一个愿景"),
+                body: L("onboarding_page2_body")
+            )
+
+            Spacer()
+            Spacer()
+        }
+        .padding(.horizontal, 32)
+    }
+
+    // MARK: - Page 3: 日常 · 你的微光主页
+    private var guidePage3: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            // Icon area - core bubble + small bubbles
+            ZStack {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color(hex: "FFD700").opacity(0.12),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 20,
+                            endRadius: 90
+                        )
+                    )
+                    .frame(width: 180, height: 180)
+
+                // Core bubble (center)
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [Color.white.opacity(0.95), Color(hex: "FFD700").opacity(0.3)],
+                            center: UnitPoint(x: 0.35, y: 0.35),
+                            startRadius: 5,
+                            endRadius: 30
+                        )
+                    )
+                    .frame(width: 56, height: 56)
+                    .shadow(color: Color(hex: "FFD700").opacity(0.4), radius: 12)
+
+                // Small bubbles around
+                ForEach(0..<3, id: \.self) { i in
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [Color.white.opacity(0.8), Color(hex: "CBA972").opacity(0.2)],
+                                center: UnitPoint(x: 0.35, y: 0.35),
+                                startRadius: 2,
+                                endRadius: 12
+                            )
+                        )
+                        .frame(width: 24, height: 24)
+                        .shadow(color: Color(hex: "CBA972").opacity(0.2), radius: 6)
+                        .offset(
+                            x: CGFloat([-40, 35, -25][i]),
+                            y: CGFloat([25, -20, -35][i])
+                        )
+                }
+            }
+            .padding(.bottom, 36)
+
+            guideTextBlock(
+                title: L("每天一件小事，微光自会生长"),
+                body: L("onboarding_page3_body")
+            )
+
+            Spacer()
+            Spacer()
+        }
+        .padding(.horizontal, 32)
+    }
+
+    // MARK: - Page 4: 时间 · 微光日历
+    private var guidePage4: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            // Icon area - calendar grid with light dots
+            ZStack {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color(hex: "CBA972").opacity(0.1),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 20,
+                            endRadius: 80
+                        )
+                    )
+                    .frame(width: 160, height: 160)
+
+                // Simplified calendar grid
+                VStack(spacing: 6) {
+                    ForEach(0..<3, id: \.self) { row in
+                        HStack(spacing: 6) {
+                            ForEach(0..<5, id: \.self) { col in
+                                let index = row * 5 + col
+                                Circle()
+                                    .fill(calendarDotColor(index: index))
+                                    .frame(width: 14, height: 14)
+                                    .shadow(
+                                        color: index == 7
+                                            ? Color(hex: "FFD700").opacity(0.5)
+                                            : Color.clear,
+                                        radius: index == 7 ? 6 : 0
+                                    )
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.bottom, 36)
+
+            guideTextBlock(
+                title: L("时间轴，见证自己的成长"),
+                body: L("onboarding_page4_body")
+            )
+
+            Spacer()
+            Spacer()
+        }
+        .padding(.horizontal, 32)
+    }
+
+    // MARK: - Page 5: 完成 · 光尘收藏
+    private var guidePage5: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            // Icon area - stardust / crystal
+            ZStack {
+                // Outer glow
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color(hex: "FFD700").opacity(0.15),
+                                Color(hex: "DDA0DD").opacity(0.08),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 10,
+                            endRadius: 90
+                        )
+                    )
+                    .frame(width: 180, height: 180)
+
+                // Crystal/stardust orb
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color.white,
+                                Color(hex: "FFD700").opacity(0.5),
+                                Color(hex: "DDA0DD").opacity(0.3)
+                            ],
+                            center: UnitPoint(x: 0.4, y: 0.3),
+                            startRadius: 5,
+                            endRadius: 35
+                        )
+                    )
+                    .frame(width: 50, height: 50)
+                    .shadow(color: Color(hex: "FFD700").opacity(0.5), radius: 20)
+
+                // Small sparkles
+                ForEach(0..<5, id: \.self) { i in
+                    Image(systemName: "sparkle")
+                        .font(.system(size: [8, 6, 10, 7, 5][i]))
+                        .foregroundColor(Color(hex: "FFD700").opacity(0.5))
+                        .offset(
+                            x: CGFloat([-35, 30, -15, 40, -30][i]),
+                            y: CGFloat([-30, -25, 35, 15, 20][i])
+                        )
+                }
+            }
+            .padding(.bottom, 36)
+
+            guideTextBlock(
+                title: L("完成的愿景，会化作你的光尘"),
+                body: L("onboarding_page5_body")
+            )
+
+            Spacer()
+
+            // CTA button - only on last page
+            Button {
+                completeOnboarding()
+            } label: {
+                Text(L("开始我的第一束微光"))
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(
+                        LinearGradient(
+                            colors: [Color(hex: "CBA972"), Color(hex: "D4AF37")],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .clipShape(Capsule())
+                    .shadow(color: Color(hex: "CBA972").opacity(0.3), radius: 10, y: 4)
+            }
+            .padding(.horizontal, 24)
+
+            Spacer()
+                .frame(height: 20)
+        }
+        .padding(.horizontal, 32)
+    }
+
+    // MARK: - Helpers
+
+    private func guideTextBlock(title: String, body: String) -> some View {
+        VStack(spacing: 24) {
+            Text(title)
+                .font(.system(size: 24, weight: .semibold, design: .rounded))
+                .foregroundColor(Color(hex: "4A4A4A"))
+                .multilineTextAlignment(.center)
+
+            Text(body)
+                .font(.system(size: 17))
+                .foregroundColor(Color(hex: "5C5C5C"))
+                .multilineTextAlignment(.center)
+                .lineSpacing(8)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func calendarDotColor(index: Int) -> Color {
+        if index == 7 {
+            // "Today" - bright gold
+            return Color(hex: "FFD700")
+        } else if index < 7 {
+            // Past - faded gold (some completed)
+            return [0, 2, 3, 5, 6].contains(index)
+                ? Color(hex: "CBA972").opacity(0.4)
+                : Color(hex: "E0DCD4").opacity(0.3)
+        } else {
+            // Future - very faint
+            return Color(hex: "E0DCD4").opacity(0.2)
+        }
+    }
+
+    private func completeOnboarding() {
+        if !isFromSettings {
+            UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
+        }
+        dismiss()
     }
 }
 

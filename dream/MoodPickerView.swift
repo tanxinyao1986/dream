@@ -18,7 +18,7 @@ struct MoodPickerView: View {
 
             // Card
             VStack(spacing: 20) {
-                Text("今天感觉怎么样？")
+                Text(L("今天感觉怎么样？"))
                     .font(.system(size: 18, weight: .semibold, design: .rounded))
                     .foregroundColor(.primary)
 

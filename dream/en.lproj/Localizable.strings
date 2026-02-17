@@ -36,6 +36,7 @@
 
 "点亮微小的日常。" = "Illuminate the small moments of everyday life.";
 "长按进入" = "Long press to enter";
+"触碰光球，开启微光" = "Touch the glow to begin";
 "回顾" = "Review";
 "今天" = "Today";
 "计划" = "Plan";
@@ -128,6 +129,7 @@
 "愿景契约草案" = "Vision Contract Draft";
 "请确认后继续" = "Please confirm to continue";
 "契约已生效" = "Contract activated";
+"契约已生效，愿景光球已注入你的日历。现在，去点亮你的第一束微光吧。" = "Contract sealed. Your vision bubbles are now in the calendar. Go light your first glow.";
 "愿景正在生成..." = "Generating vision...";
 "契约解析失败" = "Contract parsing failed";
 "重新生成" = "Regenerate";
@@ -226,3 +228,27 @@
 "技术支持正文" = "Technical Support (Lumi)\n\nLast updated: 2026-02-15\n\nIf you experience account, feature, or sync issues, contact us below.\n\nContact\n- Support email: bhzbtxy@163.com\n\nCommon Issues\n- Cannot sign in: ensure Sign in with Apple is enabled and check your network connection.\n- Data not syncing: ensure you are logged into the same Apple account and online.\n- Want to reset data: use “Delete Account & Data” in the app Settings.";
 "AI 生成内容仅用于目标规划参考，不构成专业建议。请自行判断。" = "AI-generated content is for planning support only and is not professional advice. Please use your judgment.";
 "免责声明" = "Disclaimer";
+"%d天 · %@" = "%d days · %@";
+"（信已收好）\n\n休息得怎么样？当你准备好开始下一段旅程时，随时告诉我。" = "(Letter saved)\n\nHow are you resting? When you’re ready to begin the next journey, just tell me.";
+"恢复初始登录" = "Reset to Initial Login";
+"将退出登录并清空本地数据，用于测试。" = "This will sign out and clear local data for testing.";
+"已恢复初始登录" = "Reset Complete";
+"正在处理..." = "Processing...";
+
+"跳过" = "Skip";
+"使用指引" = "User Guide";
+"还没有愿景光球呢" = "No vision bubbles yet";
+"点击 Lumi，开启你的第一段旅程" = "Tap Lumi to begin your first journey";
+"这里会收藏你完成的每一段旅程" = "This is where your completed journeys will be kept";
+"走完第一个愿景，你的第一颗光尘就会在这里亮起" = "Complete your first vision, and your first stardust will glow here";
+"每个愿望，都值得被点亮" = "Every wish deserves to be lit";
+"onboarding_page1_body" = "Lumi is your vision companion.\nYou don't need a perfect plan here—\njust a small wish that makes your heart race.\nLumi will help turn it into glowing actions on your calendar.";
+"和 Lumi 聊聊，开启你的第一个愿景" = "Chat with Lumi to begin your first vision";
+"onboarding_page2_body" = "Find the wish that excites you most right now—\none that's truly yours, not wished for someone else,\nsomething beautiful you can almost reach.\n\nFocus on just one vision at a time.\nLumi will help you clarify what's real,\nnot driven by desire, fear, or comparison…\nand break it down into one small daily step.";
+"每天一件小事，微光自会生长" = "One small thing a day, and the glow will grow";
+"onboarding_page3_body" = "Your vision becomes a daily action,\nplaced in the core glow bubble at the center of your home.\n\nDone — tap the bubble and watch it become growth.\nNot done — drag it to the calendar, continue tomorrow.\nAllowing a pause is also progress.\n\nYou can also add daily chores and reminders here,\nletting Lumi accompany your whole day.";
+"时间轴，见证自己的成长" = "A timeline that witnesses your growth";
+"onboarding_page4_body" = "The calendar remembers every step of your glow.\n\nLook back — each day is proof of your steady stride.\nToday's bubble shines, waiting for you to begin.\nFuture days are open for you to plan ahead.\n\nTime will show you: every small effort counts.";
+"完成的愿景，会化作你的光尘" = "Completed visions become your stardust";
+"onboarding_page5_body" = "Every journey you complete will crystallize into stardust,\nforever kept here, witnessing your growth.\n\nReady?";
+"开始我的第一束微光" = "Begin my first glow";

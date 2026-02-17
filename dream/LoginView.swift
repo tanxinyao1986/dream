@@ -38,11 +38,14 @@ struct LoginView: View {
 
                 // App title — localized
                 VStack(spacing: 12) {
-                    Text("微光计划")
-                        .font(.system(size: 40, weight: .light))
-                        .foregroundColor(Color(hex: "CBA972"))
+                    Text(L("微光计划"))
+                        .font(.system(size: 40, weight: .light, design: .rounded))
+                        .kerning(10)
+                        .foregroundColor(Color(hex: "4A4A4A"))
+                        .opacity(0.9)
+                        .shadow(color: Color.white.opacity(0.35), radius: 10, x: 0, y: 0)
 
-                    Text("每一步微光，都在凝聚力量")
+                    Text(L("每一步微光，都在凝聚力量"))
                         .font(.system(size: 16, weight: .medium, design: .rounded))
                         .foregroundColor(Color(hex: "CBA972").opacity(0.75))
                 }
