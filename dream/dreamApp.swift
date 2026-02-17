@@ -4392,7 +4392,7 @@ struct LumiPetAvatar: View {
 
             // Happy smile - centered
             SmilePath(width: size * 0.32, curveHeight: size * 0.14)
-                .stroke(Color(hex: "CBA972").opacity(0.8), style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+                .stroke(Color.white.opacity(0.95), style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
                 .frame(width: size * 0.32, height: size * 0.14)
                 .offset(y: size * 0.19 - smileLift)
         }
