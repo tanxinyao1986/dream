@@ -794,11 +794,6 @@ class AppState: ObservableObject {
         resetAllData(modelContext: modelContext, initializeWelcomeMessage: true)
     }
 
-    /// Reset to fresh user state (no subscription, no chat, no plans)
-    func resetForFreshUser(modelContext: ModelContext) {
-        resetAllData(modelContext: modelContext, initializeWelcomeMessage: false)
-    }
-
     private func resetAllData(modelContext: ModelContext, initializeWelcomeMessage: Bool) {
         print("AppState: 🗑️ Resetting ALL data to initial state")
 
@@ -1506,10 +1501,6 @@ struct HomeView: View {
     @State private var showResetConfirmation = false
     @State private var showSettings = false
     @State private var layoutScale: CGFloat = 1.0
-    @State private var showResetLoginConfirmation = false
-    @State private var showResetLoginSuccess = false
-    @State private var resetTapCount = 0
-    @State private var isResettingLogin = false
 
     // Task input state
     @State private var showTaskInput = false
@@ -1552,18 +1543,6 @@ struct HomeView: View {
             ZStack {
                 // Background changes based on temporal mode
                 backgroundView
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        guard appState.currentTemporalMode == .today else { return }
-                        resetTapCount += 1
-                        if resetTapCount >= 5 {
-                            resetTapCount = 0
-                            showResetLoginConfirmation = true
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                            resetTapCount = 0
-                        }
-                    }
 
                 VStack(spacing: 0) {
                     // Header with navigation
@@ -1702,34 +1681,6 @@ struct HomeView: View {
                     .environmentObject(appState)
                     .environmentObject(SupabaseManager.shared)
                     .modelContext(modelContext)
-            }
-            .confirmationDialog(
-                L("恢复初始登录"),
-                isPresented: $showResetLoginConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button(L("确认"), role: .destructive) {
-                    resetToInitialLogin()
-                }
-                Button(L("取消"), role: .cancel) {}
-            } message: {
-                Text(L("将退出登录并清空本地数据，用于测试。"))
-            }
-            .alert(L("已恢复初始登录"), isPresented: $showResetLoginSuccess) {
-                Button(L("完成")) {}
-            }
-            .overlay {
-                if isResettingLogin {
-                    ZStack {
-                        Color.black.opacity(0.2).ignoresSafeArea()
-                        ProgressView(L("正在处理..."))
-                            .padding(20)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color.white)
-                            )
-                    }
-                }
             }
         }
     }
@@ -1954,21 +1905,6 @@ struct HomeView: View {
         }
     }
 
-    private func resetToInitialLogin() {
-        guard !isResettingLogin else { return }
-        isResettingLogin = true
-
-        Task {
-            appState.resetForFreshUser(modelContext: modelContext)
-            SubscriptionManager.shared.setForceFreeMode(true)
-            await SupabaseManager.shared.signOut()
-
-            await MainActor.run {
-                isResettingLogin = false
-                showResetLoginSuccess = true
-            }
-        }
-    }
 
     // MARK: - Launchpad View
     private var launchpadView: some View {
@@ -2028,6 +1964,13 @@ struct HomeView: View {
 
                 Button(action: { appState.openChat() }) {
                     LumiPetAvatar(size: 56 * chatScale)
+                        .overlay {
+                            Text("Lumi")
+                                .font(.custom("Snell Roundhand Bold", size: 14 * chatScale))
+                                .foregroundColor(Color(hex: "FFF5E0"))
+                                .shadow(color: Color(hex: "CBA972"), radius: 3, x: 0, y: 1)
+                                .offset(x: 20 * chatScale, y: 32 * chatScale)
+                        }
                 }
                 .padding(.trailing, 24 * chatScale)
                 .padding(.bottom, 110 * chatScale)
@@ -3575,11 +3518,14 @@ struct ChatView: View {
                     }
                 }
         )
-        .onAppear {
-            // Initialize welcome message if chat history is empty
+        .task {
+            // Use task instead of onAppear to avoid blocking the main thread
             appState.initializeWelcomeMessageIfNeeded(modelContext: modelContext)
-            // Load chat messages from SwiftData
             appState.reloadChatMessages(from: modelContext)
+
+            // Brief yield to let the UI settle before focusing
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            isInputFocused = true
 
             // Auto-request graduation letter if needed
             if appState.shouldAutoRequestGraduationLetter {
@@ -3648,18 +3594,19 @@ struct ChatView: View {
                     }
 
                 // Send button - SF Symbol arrow.up.circle.fill
+                let hasText = !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 Button(action: {
                     sendMessage()
                 }) {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 32))
                         .foregroundColor(
-                            inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                ? Color(hex: "CBA972").opacity(0.4)
-                                : Color(hex: "CBA972")
+                            hasText
+                                ? Color(hex: "CBA972")
+                                : Color(hex: "CBA972").opacity(0.4)
                         )
                 }
-                .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!hasText)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -4844,6 +4791,13 @@ struct CalendarView: View {
                         }
                     }) {
                         LumiPetAvatar(size: 56 * layoutScale)
+                            .overlay {
+                                Text("Lumi")
+                                    .font(.custom("Snell Roundhand Bold", size: 14 * layoutScale))
+                                    .foregroundColor(Color(hex: "8B6914"))
+                                    .shadow(color: .white.opacity(0.6), radius: 2, x: 0, y: 0)
+                                    .offset(x: 20 * layoutScale, y: 32 * layoutScale)
+                            }
                     }
                     .padding(.trailing, 24 * layoutScale)
                     .padding(.bottom, 110 * layoutScale)

@@ -31,11 +31,14 @@ class SubscriptionManager: ObservableObject {
     @Published var isPro: Bool = false
     @Published var products: [Product] = []
 
-    private let forceFreeModeKey = "forceFreeMode"
     private var updateListenerTask: Task<Void, Never>?
 
     private init() {
         updateListenerTask = listenForTransactionUpdates()
+        // Check existing subscription status on launch
+        Task {
+            await updateSubscriptionStatus()
+        }
     }
 
     deinit {
@@ -74,6 +77,11 @@ class SubscriptionManager: ObservableObject {
             let transaction = try checkVerified(verification)
             await transaction.finish()
             await updateSubscriptionStatus()
+            // Ensure isPro is true after a verified purchase
+            // (Transaction.currentEntitlements may have a brief delay)
+            if !isPro {
+                isPro = true
+            }
             return true
 
         case .userCancelled:
@@ -106,19 +114,9 @@ class SubscriptionManager: ObservableObject {
         await updateSubscriptionStatus()
     }
 
-    func setForceFreeMode(_ enabled: Bool) {
-        UserDefaults.standard.set(enabled, forKey: forceFreeModeKey)
-        Task { await updateSubscriptionStatus() }
-    }
-
     // MARK: - Status Check
 
     private func updateSubscriptionStatus() async {
-        if UserDefaults.standard.bool(forKey: forceFreeModeKey) {
-            isPro = false
-            return
-        }
-
         var hasActiveSubscription = false
 
         for await result in Transaction.currentEntitlements {

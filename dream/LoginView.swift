@@ -54,10 +54,13 @@ struct LoginView: View {
 
                 // Sign in with Apple button
                 SignInWithAppleButton(.signIn) { request in
-                    let nonce = randomNonceString()
-                    currentNonce = nonce
+                    // Only generate a new nonce if we don't already have one
+                    // This prevents nonce mismatch when SwiftUI re-invokes the closure
+                    if currentNonce == nil {
+                        currentNonce = randomNonceString()
+                    }
                     request.requestedScopes = [.email]
-                    request.nonce = sha256(nonce)
+                    request.nonce = sha256(currentNonce!)
                 } onCompletion: { result in
                     handleSignInResult(result)
                 }
@@ -96,14 +99,20 @@ struct LoginView: View {
             Task {
                 do {
                     try await supabaseManager.signInWithApple(idToken: idToken, nonce: nonce)
+                    // Clear nonce after successful sign-in
+                    await MainActor.run { currentNonce = nil }
                 } catch {
                     await MainActor.run {
+                        // Clear nonce so a fresh one is generated on retry
+                        currentNonce = nil
                         errorMessage = L("登录失败: %@", error.localizedDescription)
                     }
                 }
             }
 
         case .failure(let error):
+            // Clear nonce for next attempt
+            currentNonce = nil
             // User cancelled is not a real error
             if (error as NSError).code != ASAuthorizationError.canceled.rawValue {
                 errorMessage = L("Apple 登录失败: %@", error.localizedDescription)
